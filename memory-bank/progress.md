@@ -531,3 +531,13 @@ Created/changed:
 
 Purpose:
 - Start the Tkinter UI by double-clicking a Windows batch file or via python -m src.ui.app.
+
+## 2026-06-12 - Backtest dashboard UI improved
+
+Changed:
+- src/ui/app.py
+- src/ui/backtest_ui_controller.py
+- tests/test_backtest_ui_controller.py
+
+Purpose:
+- UI now shows a larger scrollable dashboard with last run, data quality, windows and Buy-&-Hold sections.

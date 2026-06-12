@@ -1,4 +1,4 @@
-"""Minimal Tkinter app for running the benchmark pipeline."""
+"""Tkinter dashboard for running the benchmark pipeline."""
 
 import tkinter as tk
 from threading import Thread
@@ -13,36 +13,70 @@ from src.ui.data_download_controller import (
 
 def _format_value(value: object) -> str:
     if value is None:
-        return "-"
+        return "Noch nicht vorhanden"
     if isinstance(value, float):
         return f"{value:.4f}"
     return str(value)
 
 
+def _format_money(value: float | None) -> str:
+    if value is None:
+        return "Noch nicht vorhanden"
+    return f"{value:.2f}"
+
+
+def _format_signed(value: float | None) -> str:
+    if value is None:
+        return "Noch nicht vorhanden"
+    return f"{value:+.2f}"
+
+
+def _format_pct(value: float | None) -> str:
+    if value is None:
+        return "Noch nicht vorhanden"
+    return f"{value:+.2f}%"
+
+
 class BacktestApp:
-    """Minimal UI shell for the existing benchmark pipeline."""
+    """Dashboard UI shell for the existing benchmark pipeline."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("ETHUSDC Bot V2")
+        self.root.title("ETHUSDC Bot V2 - Backtest Dashboard")
+        self.root.geometry("900x650")
         self.status_var = tk.StringVar(value="Bereit")
-        self.result_var = tk.StringVar(value="Noch kein Ergebnis.")
+        controls = ttk.Frame(root)
+        controls.pack(fill="x", padx=12, pady=8)
         self.download_button = ttk.Button(
-            root,
+            controls,
             text="Daten laden/aktualisieren",
             command=self._start_download,
         )
-        self.download_button.pack(padx=12, pady=8, fill="x")
+        self.download_button.pack(side="left", padx=(0, 8))
         self.start_button = ttk.Button(
-            root,
+            controls,
             text="Backtest starten",
             command=self._start_backtest,
         )
-        self.start_button.pack(padx=12, pady=8, fill="x")
-        ttk.Label(root, textvariable=self.status_var).pack(padx=12, pady=4, anchor="w")
-        ttk.Label(root, textvariable=self.result_var, justify="left").pack(
-            padx=12, pady=8, anchor="w"
+        self.start_button.pack(side="left")
+        ttk.Label(root, textvariable=self.status_var).pack(fill="x", padx=12, pady=4)
+        result_frame = ttk.Frame(root)
+        result_frame.pack(fill="both", expand=True, padx=12, pady=8)
+        self.result_text = tk.Text(result_frame, wrap="word", state="disabled")
+        scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_text.yview)
+        self.result_text.configure(yscrollcommand=scrollbar.set)
+        self.result_text.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._set_dashboard_text(
+            "ETHUSDC Bot V2 - Backtest Dashboard\n\n"
+            "Noch kein Ergebnis. Bitte Daten laden/aktualisieren oder Backtest starten."
         )
+
+    def _set_dashboard_text(self, content: str) -> None:
+        self.result_text.configure(state="normal")
+        self.result_text.delete("1.0", tk.END)
+        self.result_text.insert(tk.END, content)
+        self.result_text.configure(state="disabled")
 
     def _start_download(self) -> None:
         self.download_button.configure(state="disabled")
@@ -66,7 +100,7 @@ class BacktestApp:
         self.status_var.set(
             f"Daten werden geladen... {_format_value(loaded)} Candles, {_format_value(pct)}%"
         )
-        self.result_var.set(
+        self._set_dashboard_text(
             "\n".join(
                 [
                     "Download gestartet",
@@ -81,9 +115,11 @@ class BacktestApp:
         self.download_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.status_var.set("Daten bereit" if result.success else "Datenfehler")
-        self.result_var.set(
+        self._set_dashboard_text(
             "\n".join(
                 [
+                    "A) Daten-Download",
+                    "",
                     f"Status: {'success' if result.success else 'failed'}",
                     f"Symbol: {result.symbol}",
                     f"Interval: {result.interval}",
@@ -91,6 +127,8 @@ class BacktestApp:
                     f"CSV: {_format_value(result.output_path)}",
                     f"Catalog aktualisiert: {result.catalog_updated}",
                     f"Message: {result.message}",
+                    "",
+                    "Nach erfolgreichem Download kann der Backtest gestartet werden.",
                 ]
             )
         )
@@ -107,24 +145,36 @@ class BacktestApp:
     def _show_result(self, result: BacktestUiResult) -> None:
         self.start_button.configure(state="normal")
         self.status_var.set(result.status)
-        self.result_var.set(
+        windows_present = bool(result.training_start and result.blindtest_start)
+        self._set_dashboard_text(
             "\n".join(
                 [
+                    "A) Letzter Lauf",
                     f"Run-ID: {_format_value(result.run_id)}",
                     f"Status: {result.status}",
-                    f"Startkapital: {_format_value(result.start_capital)}",
-                    f"Endkapital: {_format_value(result.final_capital)}",
-                    f"PnL: {_format_value(result.total_pnl)}",
-                    f"PnL %: {_format_value(result.total_pnl_pct)}",
-                    f"Trades: {_format_value(result.trade_count)}",
-                    "Training: "
-                    f"{_format_value(result.training_start)} bis "
-                    f"{_format_value(result.training_end)}",
-                    "Blindtest: "
-                    f"{_format_value(result.blindtest_start)} bis "
-                    f"{_format_value(result.blindtest_end)}",
                     f"Message: {result.message}",
                     f"Report: {_format_value(result.report_path)}",
+                    f"Report-Ordner: {_format_value(result.report_folder)}",
+                    "",
+                    "B) Datenqualität",
+                    f"Symbol: {_format_value(result.symbol)}",
+                    f"Candle Count: {_format_value(result.candle_count)}",
+                    f"Detected Gaps: {_format_value(result.detected_gaps)}",
+                    f"Usable for Backtest: {_format_value(result.usable_for_backtest)}",
+                    f"Training/Blindtest Daten vorhanden: {'ja' if windows_present else 'nein'}",
+                    "",
+                    "C) Zeitfenster",
+                    f"Training Start: {_format_value(result.training_start)}",
+                    f"Training Ende: {_format_value(result.training_end)}",
+                    f"Blindtest Start: {_format_value(result.blindtest_start)}",
+                    f"Blindtest Ende: {_format_value(result.blindtest_end)}",
+                    "",
+                    "D) Buy-&-Hold Benchmark",
+                    f"Startkapital: {_format_money(result.start_capital)}",
+                    f"Endkapital: {_format_money(result.final_capital)}",
+                    f"Total PnL: {_format_signed(result.total_pnl)}",
+                    f"Total PnL %: {_format_pct(result.total_pnl_pct)}",
+                    f"Trade Count: {_format_value(result.trade_count)}",
                 ]
             )
         )

@@ -61,6 +61,31 @@ def test_controller_copies_values_from_summary(monkeypatch) -> None:
     assert result.trade_count == 1
 
 
+def test_controller_provides_dashboard_fields(monkeypatch) -> None:
+    monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", _pipeline_result)
+    monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
+
+    result = run_backtest_for_ui()
+
+    assert result.symbol == "ETHUSDC"
+    assert result.candle_count == 5
+    assert result.detected_gaps == 0
+    assert result.usable_for_backtest is True
+    assert result.report_folder is not None
+
+
+def test_completed_summary_contains_result_values(monkeypatch) -> None:
+    monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", _pipeline_result)
+    monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
+
+    result = run_backtest_for_ui()
+
+    assert result.status == "completed"
+    assert result.start_capital == 100.0
+    assert result.final_capital == 120.0
+    assert result.total_pnl_pct == 20.0
+
+
 def test_failed_pipeline_without_summary_returns_failure(monkeypatch) -> None:
     monkeypatch.setattr(
         controller_module,
@@ -72,6 +97,7 @@ def test_failed_pipeline_without_summary_returns_failure(monkeypatch) -> None:
 
     assert result.success is False
     assert result.message == "missing summary"
+    assert result.report_folder is None
 
 
 def test_exception_is_caught_as_failure(monkeypatch) -> None:
