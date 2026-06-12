@@ -2,13 +2,17 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from src.backtest.preparation_pipeline import run_backtest_preparation_pipeline
 from src.data.candle_data_ensure import ensure_ethusdc_1m_data_ready
 from src.reports.backtest_summary import BacktestSummary, load_backtest_summary
 
-ALLOWED_STAKES_USDT = (100.0, 200.0, 500.0, 1000.0)
 ALLOWED_PROFILES = ("conservative", "normal", "aggressive")
+BINANCE_UNREACHABLE_MESSAGE = (
+    "Binance konnte nicht erreicht werden. Internet/Firewall/Binance-Verbindung prüfen "
+    "und später erneut versuchen."
+)
 
 
 @dataclass(frozen=True)
@@ -19,8 +23,8 @@ class BacktestUiSettings:
     profile: str = "normal"
 
     def __post_init__(self) -> None:
-        if self.stake_usdt not in ALLOWED_STAKES_USDT:
-            msg = "stake_usdt must be one of 100, 200, 500, 1000"
+        if self.stake_usdt <= 0:
+            msg = "stake_usdt must be positive"
             raise ValueError(msg)
         if self.profile not in ALLOWED_PROFILES:
             msg = "profile must be conservative, normal or aggressive"
@@ -106,16 +110,46 @@ def _failure_result(message: str, candle_count: int | None = None) -> BacktestUi
     )
 
 
-def run_backtest_for_ui(settings: BacktestUiSettings | None = None) -> BacktestUiResult:
+def _is_network_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "binance request error",
+            "winerror 10060",
+            "timed out",
+            "timeout",
+            "connection",
+            "verbindungsversuch",
+        )
+    )
+
+
+def _ui_error_message(message: str) -> str:
+    if _is_network_error(message):
+        return BINANCE_UNREACHABLE_MESSAGE
+    return message
+
+
+def run_backtest_for_ui(
+    settings: BacktestUiSettings | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> BacktestUiResult:
     """Run the existing benchmark pipeline and return a UI-friendly result."""
     try:
         selected_settings = settings or BacktestUiSettings()
-        ensure_result = ensure_ethusdc_1m_data_ready()
+        if progress_callback is not None:
+            progress_callback({"phase": "data_check_started", "progress_pct": 0.0})
+        ensure_result = ensure_ethusdc_1m_data_ready(progress_callback=progress_callback)
         if not ensure_result.success:
-            return _failure_result(ensure_result.message, candle_count=ensure_result.candle_count)
+            return _failure_result(
+                _ui_error_message(ensure_result.message),
+                candle_count=ensure_result.candle_count,
+            )
         pipeline_result = run_backtest_preparation_pipeline(
             stake_usdt=selected_settings.stake_usdt,
             profile=selected_settings.profile,
+            progress_callback=progress_callback,
         )
         if pipeline_result.backtest_summary_path:
             summary = load_backtest_summary(pipeline_result.run_id)
@@ -134,7 +168,9 @@ def run_backtest_for_ui(settings: BacktestUiSettings | None = None) -> BacktestU
             success=False,
             run_id=pipeline_result.run_id or None,
             status=pipeline_result.status,
-            message=pipeline_result.error or "backtest pipeline failed without summary",
+            message=_ui_error_message(
+                pipeline_result.error or "backtest pipeline failed without summary"
+            ),
             symbol=None,
             start_capital=None,
             final_capital=None,
@@ -152,11 +188,12 @@ def run_backtest_for_ui(settings: BacktestUiSettings | None = None) -> BacktestU
             report_folder=None,
         )
     except Exception as error:  # noqa: BLE001
+        message = _ui_error_message(str(error))
         return BacktestUiResult(
             success=False,
             run_id=None,
             status="failed",
-            message=str(error),
+            message=message,
             symbol=None,
             start_capital=None,
             final_capital=None,

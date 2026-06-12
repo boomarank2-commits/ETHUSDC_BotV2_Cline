@@ -66,7 +66,11 @@ def _summary() -> BacktestSummary:
 
 
 def test_successful_controller_run_returns_success(monkeypatch) -> None:
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", _pipeline_result)
     monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
 
@@ -76,7 +80,11 @@ def test_successful_controller_run_returns_success(monkeypatch) -> None:
 
 
 def test_controller_copies_values_from_summary(monkeypatch) -> None:
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", _pipeline_result)
     monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
 
@@ -88,7 +96,11 @@ def test_controller_copies_values_from_summary(monkeypatch) -> None:
 
 
 def test_controller_provides_dashboard_fields(monkeypatch) -> None:
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", _pipeline_result)
     monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
 
@@ -102,7 +114,11 @@ def test_controller_provides_dashboard_fields(monkeypatch) -> None:
 
 
 def test_completed_summary_contains_result_values(monkeypatch) -> None:
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", _pipeline_result)
     monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
 
@@ -115,7 +131,11 @@ def test_completed_summary_contains_result_values(monkeypatch) -> None:
 
 
 def test_failed_pipeline_without_summary_returns_failure(monkeypatch) -> None:
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
     monkeypatch.setattr(
         controller_module,
         "run_backtest_preparation_pipeline",
@@ -134,7 +154,11 @@ def test_exception_is_caught_as_failure(monkeypatch) -> None:
         raise RuntimeError("missing data_catalog.json")
 
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", raise_error)
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
 
     result = run_backtest_for_ui()
 
@@ -151,7 +175,9 @@ def test_controller_does_not_start_pipeline_when_ensure_has_one_candle(monkeypat
         return _pipeline_result()
 
     monkeypatch.setattr(
-        controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result(False, 1)
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(False, 1),
     )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
 
@@ -163,17 +189,26 @@ def test_controller_does_not_start_pipeline_when_ensure_has_one_candle(monkeypat
 
 
 def test_valid_stakes_are_accepted() -> None:
-    for stake in (100.0, 200.0, 500.0, 1000.0):
+    for stake in (100.0, 200.0, 500.0, 1000.0, 100000.0):
         assert BacktestUiSettings(stake_usdt=stake).stake_usdt == stake
 
 
 def test_invalid_stake_is_rejected() -> None:
     try:
-        BacktestUiSettings(stake_usdt=300.0)
+        BacktestUiSettings(stake_usdt=0.0)
     except ValueError as error:
         assert "stake_usdt" in str(error)
     else:
         raise AssertionError("invalid stake must fail")
+
+
+def test_negative_stake_is_rejected() -> None:
+    try:
+        BacktestUiSettings(stake_usdt=-1.0)
+    except ValueError as error:
+        assert "stake_usdt" in str(error)
+    else:
+        raise AssertionError("negative stake must fail")
 
 
 def test_valid_profiles_are_accepted() -> None:
@@ -192,7 +227,11 @@ def test_invalid_profile_is_rejected() -> None:
 
 def test_settings_are_forwarded_to_pipeline(monkeypatch) -> None:
     captured: dict[str, object] = {}
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", lambda: _ensure_result())
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
 
     def fake_pipeline(**kwargs):
         captured.update(kwargs)
@@ -205,6 +244,58 @@ def test_settings_are_forwarded_to_pipeline(monkeypatch) -> None:
 
     assert captured["stake_usdt"] == 500.0
     assert captured["profile"] == "aggressive"
+
+
+def test_progress_callback_receives_phases(monkeypatch) -> None:
+    events: list[dict] = []
+
+    def fake_ensure(progress_callback=None):
+        progress_callback({"phase": "data_ensure", "mode": "already_current"})
+        return _ensure_result()
+
+    def fake_pipeline(**kwargs):
+        kwargs["progress_callback"]({"phase": "completed", "progress_pct": 100.0})
+        return _pipeline_result()
+
+    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", fake_ensure)
+    monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
+    monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
+
+    run_backtest_for_ui(progress_callback=events.append)
+
+    phases = [event.get("phase") for event in events]
+    assert "data_check_started" in phases
+    assert "data_ensure" in phases
+    assert "completed" in phases
+
+
+def test_network_error_is_mapped_to_clear_ui_message(monkeypatch) -> None:
+    network_error_result = CandleDataEnsureResult(
+        success=False,
+        message="Binance request error: [WinError 10060] timeout",
+        symbol="ETHUSDC",
+        interval="1m",
+        candle_count=1,
+        required_candles=5,
+        output_path=None,
+        catalog_path=None,
+        was_updated=False,
+        full_download=False,
+        incremental_update=False,
+        already_current=False,
+        last_open_time=None,
+        error="timeout",
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: network_error_result,
+    )
+
+    result = run_backtest_for_ui()
+
+    assert result.success is False
+    assert "Binance konnte nicht erreicht werden" in result.message
 
 
 def test_no_short_futures_margin_or_leverage_fields() -> None:

@@ -20,6 +20,10 @@ from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 
 DOWNLOAD_BUFFER_DAYS = 2
 CURRENT_GRACE_MINUTES = 2
+NETWORK_ERROR_MESSAGE = (
+    "Binance konnte nicht erreicht werden. Internet/Firewall/Binance-Verbindung prüfen "
+    "und später erneut versuchen."
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,41 @@ def _save_default_catalog(target_path: Path) -> str:
         [CandleDataCatalogEntry(CONFIG.symbol, "1m", str(target_path))]
     )
     return str(catalog_path)
+
+
+def _emit_progress(
+    progress_callback: Callable[[dict], None] | None,
+    mode: str,
+    detail: str,
+    progress_pct: float,
+    **extra: object,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "phase": "data_ensure",
+            "mode": mode,
+            "detail": detail,
+            "progress_pct": progress_pct,
+            **extra,
+        }
+    )
+
+
+def _is_network_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "binance request error",
+            "winerror 10060",
+            "timed out",
+            "timeout",
+            "connection",
+            "verbindungsversuch",
+        )
+    )
 
 
 def _is_current(last_open_time: str) -> bool:
@@ -101,9 +140,14 @@ def _failure(
     error: Exception | str, candle_count: int = 0, target_path: Path | None = None
 ) -> CandleDataEnsureResult:
     error_message = str(error)
+    message = (
+        NETWORK_ERROR_MESSAGE
+        if _is_network_error(error_message)
+        else f"ETHUSDC 1m Daten konnten nicht vorbereitet werden: {error_message}"
+    )
     return CandleDataEnsureResult(
         success=False,
-        message=f"ETHUSDC 1m Daten konnten nicht vorbereitet werden: {error_message}",
+        message=message,
         symbol=CONFIG.symbol,
         interval="1m",
         candle_count=candle_count,
@@ -125,7 +169,14 @@ def ensure_ethusdc_1m_data_ready(
     """Check/update local ETHUSDC 1m data; never runs a backtest."""
     target_path = DEFAULT_BINANCE_CANDLE_PATH
     try:
+        _emit_progress(progress_callback, "checking", "Prüfe lokale ETHUSDC 1m Daten", 0.0)
         if not target_path.exists():
+            _emit_progress(
+                progress_callback,
+                "full_download",
+                "Lokale CSV fehlt; vollständiger Download startet",
+                1.0,
+            )
             start_time_ms, end_time_ms = _full_download_window_ms()
             download_ethusdc_1m_candles(
                 start_time_ms=start_time_ms,
@@ -147,6 +198,14 @@ def ensure_ethusdc_1m_data_ready(
         )
         existing_count = len(existing_dataset.candles)
         if existing_count < REQUIRED_CANDLE_COUNT:
+            _emit_progress(
+                progress_callback,
+                "rebuild_incomplete_csv",
+                "Unvollständige CSV erkannt; vollständiger Neuaufbau startet",
+                1.0,
+                candle_count=existing_count,
+                required_candles=REQUIRED_CANDLE_COUNT,
+            )
             start_time_ms, end_time_ms = _full_download_window_ms()
             download_ethusdc_1m_candles(
                 start_time_ms=start_time_ms,
@@ -165,6 +224,14 @@ def ensure_ethusdc_1m_data_ready(
 
         last_open_time = existing_dataset.candles[-1].open_time
         if _is_current(last_open_time):
+            _emit_progress(
+                progress_callback,
+                "already_current",
+                "Lokale ETHUSDC 1m Daten sind vollständig und aktuell",
+                100.0,
+                candle_count=existing_count,
+                last_open_time=last_open_time,
+            )
             return _final_result(
                 target_path,
                 "ETHUSDC 1m Daten sind bereits aktuell und vollständig.",
@@ -174,6 +241,14 @@ def ensure_ethusdc_1m_data_ready(
                 already_current=True,
             )
 
+        _emit_progress(
+            progress_callback,
+            "incremental_update",
+            "Lokale Daten sind vollständig, aber veraltet; Update startet",
+            1.0,
+            candle_count=existing_count,
+            last_open_time=last_open_time,
+        )
         update_ethusdc_1m_candles(
             output_path=target_path,
             required_candles=REQUIRED_CANDLE_COUNT,
@@ -197,7 +272,16 @@ def ensure_ethusdc_1m_data_ready(
             )
         except Exception:  # noqa: BLE001
             candle_count = 0
-        return _failure(error, candle_count=candle_count, target_path=target_path)
+        result = _failure(error, candle_count=candle_count, target_path=target_path)
+        _emit_progress(
+            progress_callback,
+            "failed",
+            result.message,
+            100.0,
+            candle_count=candle_count,
+            error=result.error,
+        )
+        return result
 
 
 def utc_now_iso() -> str:

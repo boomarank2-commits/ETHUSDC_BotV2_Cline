@@ -1,6 +1,7 @@
 """Strategy V1 fixed-stake LONG-only Spot backtest engine."""
 
 from dataclasses import dataclass
+from typing import Callable
 
 from src.data.candle_schema import Candle
 
@@ -238,12 +239,26 @@ def _training_score(result: StrategyV1Result, all_zero_trades: bool) -> tuple[fl
 def select_best_strategy_v1(
     training_candles: list[Candle],
     start_capital_reference: float = 100.0,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> StrategyV1Result:
     """Select the best V1 candidate on training candles only."""
     _validate_start_capital(start_capital_reference)
-    results = [
-        run_strategy_v1_on_candles(training_candles, candidate, start_capital_reference)
-        for candidate in default_strategy_v1_candidates()
-    ]
+    candidates = default_strategy_v1_candidates()
+    results: list[StrategyV1Result] = []
+    total_candidates = len(candidates)
+    for index, candidate in enumerate(candidates, start=1):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "strategy_v1_training_started",
+                    "current_candidate": index,
+                    "total_candidates": total_candidates,
+                    "progress_pct": 70.0 + (index / total_candidates * 10.0),
+                    "detail": f"Strategy V1 Training Kandidat {index}/{total_candidates}",
+                }
+            )
+        results.append(
+            run_strategy_v1_on_candles(training_candles, candidate, start_capital_reference)
+        )
     all_zero_trades = all(result.trade_count == 0 for result in results)
     return max(results, key=lambda result: _training_score(result, all_zero_trades))

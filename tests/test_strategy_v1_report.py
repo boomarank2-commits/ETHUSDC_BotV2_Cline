@@ -61,7 +61,7 @@ def test_blindtest_uses_exact_training_candidate(monkeypatch) -> None:
     monkeypatch.setattr(
         report_module,
         "select_best_strategy_v1",
-        lambda candles, start_capital_reference: StrategyV1Result(
+        lambda candles, start_capital_reference, progress_callback=None: StrategyV1Result(
             selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
         ),
     )
@@ -82,7 +82,7 @@ def test_daily_stats_are_calculated(monkeypatch) -> None:
     monkeypatch.setattr(
         report_module,
         "select_best_strategy_v1",
-        lambda candles, start_capital_reference: StrategyV1Result(
+        lambda candles, start_capital_reference, progress_callback=None: StrategyV1Result(
             selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
         ),
     )
@@ -119,7 +119,7 @@ def test_strategy_v1_report_save_and_load(monkeypatch) -> None:
     monkeypatch.setattr(
         report_module,
         "select_best_strategy_v1",
-        lambda candles, start_capital_reference: StrategyV1Result(
+        lambda candles, start_capital_reference, progress_callback=None: StrategyV1Result(
             selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
         ),
     )
@@ -143,7 +143,7 @@ def test_report_uses_selected_stake_usdt(monkeypatch) -> None:
     monkeypatch.setattr(
         report_module,
         "select_best_strategy_v1",
-        lambda candles, start_capital_reference: StrategyV1Result(
+        lambda candles, start_capital_reference, progress_callback=None: StrategyV1Result(
             selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
         ),
     )
@@ -170,7 +170,7 @@ def test_report_stores_profile(monkeypatch) -> None:
     monkeypatch.setattr(
         report_module,
         "select_best_strategy_v1",
-        lambda candles, start_capital_reference: StrategyV1Result(
+        lambda candles, start_capital_reference, progress_callback=None: StrategyV1Result(
             selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
         ),
     )
@@ -187,6 +187,40 @@ def test_report_stores_profile(monkeypatch) -> None:
     )
 
     assert report.profile == "aggressive"
+
+
+def test_report_emits_training_and_blindtest_progress(monkeypatch) -> None:
+    selected = _candidate()
+    events: list[dict] = []
+
+    def fake_select(candles, start_capital_reference, progress_callback=None):
+        progress_callback(
+            {
+                "phase": "strategy_v1_training_started",
+                "current_candidate": 1,
+                "total_candidates": 1,
+                "progress_pct": 80.0,
+            }
+        )
+        return StrategyV1Result(selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, [])
+
+    monkeypatch.setattr(report_module, "select_best_strategy_v1", fake_select)
+    monkeypatch.setattr(
+        report_module,
+        "run_strategy_v1_on_candles",
+        lambda candles, candidate, start_capital_reference=100.0: StrategyV1Result(
+            candidate, 100.0, candidate.stake_usdt, 101.0, 1.0, 1.0, 1.0, 1, 1, 0, 0, 0.0, []
+        ),
+    )
+
+    build_strategy_v1_training_blindtest_report(
+        "run_20260612_240007", _split(), progress_callback=events.append
+    )
+
+    phases = [event.get("phase") for event in events]
+    assert "strategy_v1_training_started" in phases
+    assert "strategy_v1_blindtest_started" in phases
+    assert "strategy_v1_blindtest_completed" in phases
 
 
 def test_invalid_profile_is_rejected() -> None:

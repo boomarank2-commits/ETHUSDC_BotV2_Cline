@@ -5,10 +5,6 @@ from threading import Thread
 from tkinter import ttk
 
 from src.ui.backtest_ui_controller import BacktestUiResult, BacktestUiSettings, run_backtest_for_ui
-from src.ui.data_download_controller import (
-    DataDownloadUiResult,
-    download_required_ethusdc_1m_data_for_ui,
-)
 
 
 def _format_value(value: object) -> str:
@@ -45,25 +41,27 @@ class BacktestApp:
         self.root.title("ETHUSDC Bot V2 - Backtest Dashboard")
         self.root.geometry("900x650")
         self.status_var = tk.StringVar(value="Bereit")
-        self.stake_var = tk.StringVar(value="100")
+        self.phase_var = tk.StringVar(value="Phase: bereit")
+        self.progress_var = tk.StringVar(value="Fortschritt: 0%")
+        self.detail_var = tk.StringVar(value="Detail: Noch kein Lauf gestartet")
+        self.candles_var = tk.StringVar(value="Candles: Noch nicht geprüft")
+        self.stake_preset_var = tk.StringVar(value="100")
+        self.stake_custom_var = tk.StringVar(value="")
         self.profile_var = tk.StringVar(value="normal")
         controls = ttk.Frame(root)
         controls.pack(fill="x", padx=12, pady=8)
-        self.download_button = ttk.Button(
-            controls,
-            text="Daten prüfen/aktualisieren",
-            command=self._start_download,
-        )
-        self.download_button.pack(side="left", padx=(0, 8))
-        ttk.Label(controls, text="Stake:").pack(side="left", padx=(0, 4))
+        ttk.Label(controls, text="Stake Preset:").pack(side="left", padx=(0, 4))
         self.stake_combo = ttk.Combobox(
             controls,
-            textvariable=self.stake_var,
+            textvariable=self.stake_preset_var,
             values=("100", "200", "500", "1000"),
             width=8,
             state="readonly",
         )
         self.stake_combo.pack(side="left", padx=(0, 8))
+        ttk.Label(controls, text="Stake USDT:").pack(side="left", padx=(0, 4))
+        self.stake_entry = ttk.Entry(controls, textvariable=self.stake_custom_var, width=12)
+        self.stake_entry.pack(side="left", padx=(0, 8))
         ttk.Label(controls, text="Profil:").pack(side="left", padx=(0, 4))
         self.profile_combo = ttk.Combobox(
             controls,
@@ -80,6 +78,12 @@ class BacktestApp:
         )
         self.start_button.pack(side="left")
         ttk.Label(root, textvariable=self.status_var).pack(fill="x", padx=12, pady=4)
+        status_frame = ttk.Frame(root)
+        status_frame.pack(fill="x", padx=12, pady=4)
+        ttk.Label(status_frame, textvariable=self.phase_var).pack(anchor="w")
+        ttk.Label(status_frame, textvariable=self.progress_var).pack(anchor="w")
+        ttk.Label(status_frame, textvariable=self.detail_var).pack(anchor="w")
+        ttk.Label(status_frame, textvariable=self.candles_var).pack(anchor="w")
         result_frame = ttk.Frame(root)
         result_frame.pack(fill="both", expand=True, padx=12, pady=8)
         self.result_text = tk.Text(result_frame, wrap="word", state="disabled")
@@ -89,7 +93,7 @@ class BacktestApp:
         scrollbar.pack(side="right", fill="y")
         self._set_dashboard_text(
             "ETHUSDC Bot V2 - Backtest Dashboard\n\n"
-            "Noch kein Ergebnis. Bitte Daten laden/aktualisieren oder Backtest starten."
+            "Noch kein Ergebnis. Bitte Stake/Profil wählen und Backtest starten."
         )
 
     def _set_dashboard_text(self, content: str) -> None:
@@ -98,81 +102,79 @@ class BacktestApp:
         self.result_text.insert(tk.END, content)
         self.result_text.configure(state="disabled")
 
-    def _start_download(self) -> None:
-        self.download_button.configure(state="disabled")
-        self.start_button.configure(state="disabled")
-        self.status_var.set("Prüfe/aktualisiere Daten...")
-        Thread(target=self._run_download_worker, daemon=True).start()
+    def _queue_progress(self, progress: dict) -> None:
+        self.root.after(0, self._show_progress, progress)
 
-    def _run_download_worker(self) -> None:
-        result = download_required_ethusdc_1m_data_for_ui(
-            progress_callback=self._queue_download_progress
-        )
-        self.root.after(0, self._show_download_result, result)
-
-    def _queue_download_progress(self, progress: dict) -> None:
-        self.root.after(0, self._show_download_progress, progress)
-
-    def _show_download_progress(self, progress: dict) -> None:
-        loaded = progress.get("loaded_candles")
+    def _show_progress(self, progress: dict) -> None:
+        phase = progress.get("phase") or progress.get("mode") or "läuft"
+        detail = progress.get("detail") or progress.get("message") or "Arbeite..."
         pct = progress.get("progress_pct")
+        loaded = progress.get("loaded_candles")
+        candle_count = progress.get("candle_count") or loaded
         last_open_time = progress.get("last_open_time")
-        self.status_var.set(
-            f"Prüfe/aktualisiere Daten... {_format_value(loaded)} Candles, {_format_value(pct)}%"
+        self.status_var.set(str(detail))
+        self.phase_var.set(f"Phase: {_format_value(phase)}")
+        self.progress_var.set(f"Fortschritt: {_format_value(pct)}%")
+        self.detail_var.set(f"Detail: {_format_value(detail)}")
+        candle_text = (
+            f"Candles: {_format_value(candle_count)} | "
+            f"Letzte Candle: {_format_value(last_open_time)}"
         )
+        self.candles_var.set(candle_text)
         self._set_dashboard_text(
             "\n".join(
                 [
-                    "Download gestartet",
-                    f"Geladene Candles: {_format_value(loaded)}",
+                    "Backtest läuft",
+                    f"Phase: {_format_value(phase)}",
                     f"Fortschritt: {_format_value(pct)}%",
+                    f"Detail: {_format_value(detail)}",
+                    f"Candles: {_format_value(candle_count)}",
                     f"Letzter Timestamp: {_format_value(last_open_time)}",
                 ]
             )
         )
 
-    def _show_download_result(self, result: DataDownloadUiResult) -> None:
-        self.download_button.configure(state="normal")
-        self.start_button.configure(state="normal")
-        self.status_var.set("Daten bereit" if result.success else "Datenfehler")
-        self._set_dashboard_text(
-            "\n".join(
-                [
-                    "A) Daten-Download",
-                    "",
-                    f"Status: {'success' if result.success else 'failed'}",
-                    f"Symbol: {result.symbol}",
-                    f"Interval: {result.interval}",
-                    f"Candles: {_format_value(result.candle_count)}",
-                    f"CSV: {_format_value(result.output_path)}",
-                    f"Catalog aktualisiert: {result.catalog_updated}",
-                    f"Message: {result.message}",
-                    "",
-                    "Nach erfolgreichem Download kann der Backtest gestartet werden.",
-                ]
-            )
-        )
+    def _read_stake_usdt(self) -> float:
+        raw_value = self.stake_custom_var.get().strip() or self.stake_preset_var.get().strip()
+        try:
+            stake = float(raw_value.replace(",", "."))
+        except ValueError as error:
+            msg = "Stake USDT muss eine positive Zahl sein."
+            raise ValueError(msg) from error
+        if stake <= 0:
+            msg = "Stake USDT muss größer als 0 sein."
+            raise ValueError(msg)
+        return stake
 
     def _start_backtest(self) -> None:
         profile_map = {"vorsichtig": "conservative", "normal": "normal", "aggressiv": "aggressive"}
-        self.current_settings = BacktestUiSettings(
-            stake_usdt=float(self.stake_var.get()),
-            profile=profile_map[self.profile_var.get()],
-        )
-        self.download_button.configure(state="disabled")
+        try:
+            self.current_settings = BacktestUiSettings(
+                stake_usdt=self._read_stake_usdt(),
+                profile=profile_map[self.profile_var.get()],
+            )
+        except ValueError as error:
+            self.status_var.set("Eingabefehler")
+            self.detail_var.set(f"Detail: {error}")
+            self._set_dashboard_text(f"Eingabefehler\n\n{error}")
+            return
         self.start_button.configure(state="disabled")
         self.status_var.set("Prüfe/aktualisiere Daten...")
+        self.phase_var.set("Phase: Datenprüfung")
+        self.progress_var.set("Fortschritt: 0%")
+        self.detail_var.set("Detail: Automatische Datenprüfung startet")
         Thread(target=self._run_backtest_worker, daemon=True).start()
 
     def _run_backtest_worker(self) -> None:
-        self.root.after(0, lambda: self.status_var.set("Starte Backtest..."))
-        result = run_backtest_for_ui(self.current_settings)
+        result = run_backtest_for_ui(self.current_settings, progress_callback=self._queue_progress)
         self.root.after(0, self._show_result, result)
 
     def _show_result(self, result: BacktestUiResult) -> None:
-        self.download_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.status_var.set(result.status)
+        self.phase_var.set(f"Phase: {'fertig' if result.success else 'fehlgeschlagen'}")
+        self.progress_var.set("Fortschritt: 100%")
+        self.detail_var.set(f"Detail: {result.message}")
         windows_present = bool(result.training_start and result.blindtest_start)
         self._set_dashboard_text(
             "\n".join(

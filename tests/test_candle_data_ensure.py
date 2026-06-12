@@ -45,6 +45,22 @@ def test_missing_csv_triggers_full_download(
     assert result.full_download is True
 
 
+def test_missing_csv_emits_full_download_mode(
+    monkeypatch: pytest.MonkeyPatch, fast_paths: Path
+) -> None:
+    events: list[dict] = []
+
+    def fake_download(**kwargs):
+        save_candle_dataset_to_csv(_dataset(5), kwargs["output_path"])
+        return _dataset(5)
+
+    monkeypatch.setattr(ensure_module, "download_ethusdc_1m_candles", fake_download)
+
+    ensure_module.ensure_ethusdc_1m_data_ready(progress_callback=events.append)
+
+    assert "full_download" in [event.get("mode") for event in events]
+
+
 def test_complete_current_csv_does_not_download(
     monkeypatch: pytest.MonkeyPatch, fast_paths: Path
 ) -> None:
@@ -62,6 +78,18 @@ def test_complete_current_csv_does_not_download(
     assert result.success is True
     assert result.already_current is True
     assert result.was_updated is False
+
+
+def test_current_csv_emits_already_current_mode(
+    monkeypatch: pytest.MonkeyPatch, fast_paths: Path
+) -> None:
+    events: list[dict] = []
+    save_candle_dataset_to_csv(_dataset(5), fast_paths)
+    monkeypatch.setattr(ensure_module, "_is_current", lambda last_open_time: True)
+
+    ensure_module.ensure_ethusdc_1m_data_ready(progress_callback=events.append)
+
+    assert "already_current" in [event.get("mode") for event in events]
 
 
 def test_complete_outdated_csv_triggers_incremental_update(
@@ -86,6 +114,24 @@ def test_complete_outdated_csv_triggers_incremental_update(
     assert result.candle_count == 6
 
 
+def test_outdated_csv_emits_incremental_update_mode(
+    monkeypatch: pytest.MonkeyPatch, fast_paths: Path
+) -> None:
+    events: list[dict] = []
+    save_candle_dataset_to_csv(_dataset(5), fast_paths)
+    monkeypatch.setattr(ensure_module, "_is_current", lambda last_open_time: False)
+
+    def fake_update(**kwargs):
+        save_candle_dataset_to_csv(_dataset(6), kwargs["output_path"])
+        return load_candle_dataset_from_csv(kwargs["output_path"])
+
+    monkeypatch.setattr(ensure_module, "update_ethusdc_1m_candles", fake_update)
+
+    ensure_module.ensure_ethusdc_1m_data_ready(progress_callback=events.append)
+
+    assert "incremental_update" in [event.get("mode") for event in events]
+
+
 def test_incomplete_csv_rebuilds_instead_of_continuing(
     monkeypatch: pytest.MonkeyPatch, fast_paths: Path
 ) -> None:
@@ -108,6 +154,23 @@ def test_incomplete_csv_rebuilds_instead_of_continuing(
     assert "neu aufgebaut" in result.message
 
 
+def test_incomplete_csv_emits_rebuild_mode(
+    monkeypatch: pytest.MonkeyPatch, fast_paths: Path
+) -> None:
+    events: list[dict] = []
+    save_candle_dataset_to_csv(_dataset(1), fast_paths)
+
+    def fake_download(**kwargs):
+        save_candle_dataset_to_csv(_dataset(5), kwargs["output_path"])
+        return _dataset(5)
+
+    monkeypatch.setattr(ensure_module, "download_ethusdc_1m_candles", fake_download)
+
+    ensure_module.ensure_ethusdc_1m_data_ready(progress_callback=events.append)
+
+    assert "rebuild_incomplete_csv" in [event.get("mode") for event in events]
+
+
 def test_incomplete_csv_failed_rebuild_stays_failed(
     monkeypatch: pytest.MonkeyPatch, fast_paths: Path
 ) -> None:
@@ -124,3 +187,17 @@ def test_incomplete_csv_failed_rebuild_stays_failed(
     assert result.success is False
     assert result.candle_count == 1
     assert "Backtest wurde nicht gestartet" in result.message
+
+
+def test_network_error_returns_clear_message(
+    monkeypatch: pytest.MonkeyPatch, fast_paths: Path
+) -> None:
+    def fake_download(**kwargs):
+        raise RuntimeError("Binance request error: [WinError 10060] timeout")
+
+    monkeypatch.setattr(ensure_module, "download_ethusdc_1m_candles", fake_download)
+
+    result = ensure_module.ensure_ethusdc_1m_data_ready()
+
+    assert result.success is False
+    assert "Binance konnte nicht erreicht werden" in result.message

@@ -3,7 +3,7 @@
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.backtest.strategy_v1 import (
     StrategyV1Candidate,
@@ -74,19 +74,40 @@ def build_strategy_v1_training_blindtest_report(
     start_capital_reference: float = 100.0,
     stake_usdt: float = 100.0,
     profile: str = "normal",
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> StrategyV1TrainingBlindtestReport:
     """Train on training candles, then run frozen V1 candidate on blindtest candles."""
     get_run_report_dir(run_id)
     if profile not in ("conservative", "normal", "aggressive"):
         msg = "profile must be conservative, normal or aggressive"
         raise ValueError(msg)
-    training_result = select_best_strategy_v1(split.training_candles, start_capital_reference)
+    training_result = select_best_strategy_v1(
+        split.training_candles,
+        start_capital_reference,
+        progress_callback=progress_callback,
+    )
     selected = StrategyV1Candidate(
         **{**asdict(training_result.candidate), "stake_usdt": stake_usdt}
     )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "phase": "strategy_v1_blindtest_started",
+                "progress_pct": 82.0,
+                "detail": "Strategy V1 Blindtest läuft",
+            }
+        )
     blindtest_result = run_strategy_v1_on_candles(
         split.blindtest_candles, selected, start_capital_reference
     )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "phase": "strategy_v1_blindtest_completed",
+                "progress_pct": 88.0,
+                "detail": "Strategy V1 Blindtest abgeschlossen",
+            }
+        )
     daily = _daily_pnls(blindtest_result.trades)
     daily_values = list(daily.values())
     return StrategyV1TrainingBlindtestReport(

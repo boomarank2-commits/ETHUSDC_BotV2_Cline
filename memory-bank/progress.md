@@ -587,3 +587,14 @@ Created/changed:
 
 Purpose:
 - Backtest start now checks/updates ETHUSDC 1m data before the pipeline and blocks runs with insufficient candles.
+
+## 2026-06-12 - UI workflow progress and error handling improved
+
+Changed:
+- Backtest is now the central UI action; data check/update runs automatically.
+- Free positive Stake USDT input added next to presets.
+- UI progress callbacks show data check, download/update, pipeline, training, blindtest and completion/failure phases.
+- Binance/network timeout errors are mapped to a clear user message.
+
+Purpose:
+- Avoid silent runs, separate required data loading, and unclear timeout failures in real UI use.

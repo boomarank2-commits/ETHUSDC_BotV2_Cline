@@ -167,6 +167,26 @@ def test_progress_ends_completed(fast_success_pipeline: None) -> None:
     assert load_run_progress(result.run_id).status == "completed"
 
 
+def test_pipeline_emits_progress_phases(fast_success_pipeline: None) -> None:
+    events: list[dict] = []
+
+    result = run_backtest_preparation_pipeline(progress_callback=events.append)
+
+    phases = [event.get("phase") for event in events]
+    assert result.status == "completed"
+    assert "run_initialized" in phases
+    assert "data_preparation_started" in phases
+    assert "data_preparation_completed" in phases
+    assert "split_started" in phases
+    assert "split_completed" in phases
+    assert "buyhold_started" in phases
+    assert "strategy_v0_started" in phases
+    assert "strategy_v1_training_started" in phases
+    assert "strategy_v1_blindtest_started" in phases
+    assert "summary_started" in phases
+    assert "completed" in phases
+
+
 def test_missing_catalog_results_in_failed_or_clear_error() -> None:
     catalog_path = get_catalog_path()
     backup_path = catalog_path.with_suffix(".json.pipeline_backup")
