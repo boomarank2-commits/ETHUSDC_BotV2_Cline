@@ -12,9 +12,9 @@ __pycache__/
 htmlcov/
 
 # Data / reports / logs
-data/
-reports/
-logs/
+/data/
+/reports/
+/logs/
 *.csv
 *.parquet
 *.sqlite

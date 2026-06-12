@@ -156,3 +156,32 @@ Confirmed additions:
 Scope:
 - Documentation only.
 - No code changed.
+
+## 2026-06-12 - Blindtest expectation report schema created
+
+Created:
+- src/reports/blindtest_expectation_schema.py
+- tests/test_blindtest_expectation_schema.py
+
+Adjusted:
+- .gitignore now ignores only root runtime reports via /reports/ so src/reports/ can be versioned.
+
+Purpose:
+- Technical schema for future blindtest expectation reports.
+- Stores monthly results and expectation range fields.
+- Allows negative pnl, final_result and total_pnl.
+- Rejects negative trade and no_trade counts.
+
+Scope:
+- Schema and validation only.
+- No trading code.
+- No backtest calculation.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 30 passed in 0.06s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 22 files already formatted.
