@@ -423,3 +423,12 @@ Created:
 
 Purpose:
 - Split ETHUSDC 1m CandleDataset into technical 730 day training and 365 day blindtest windows.
+
+## 2026-06-12 - Train/blind split report created
+
+Created:
+- src/data/train_blind_split_report.py
+- tests/test_train_blind_split_report.py
+
+Purpose:
+- Save/load technical run report for training and blindtest candle windows.
