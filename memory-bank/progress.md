@@ -432,3 +432,12 @@ Created:
 
 Purpose:
 - Save/load technical run report for training and blindtest candle windows.
+
+## 2026-06-12 - Backtest preparation pipeline created
+
+Created:
+- src/backtest/preparation_pipeline.py
+- tests/test_preparation_pipeline.py
+
+Purpose:
+- Run technical preparation: initialize run, load local candles, save data and split reports, update progress, finalize run.
