@@ -45,6 +45,17 @@ def test_after_loss_next_trade_uses_100_stake() -> None:
     assert result.trades[0].net_pnl < 0
 
 
+def test_each_trade_uses_selected_fixed_stake() -> None:
+    candidate = StrategyV1Candidate(
+        "momentum_breakout", "test", 1, None, 0.001, 0.004, 0.004, 2, 0, 10.0, 500.0
+    )
+    result = run_strategy_v1_on_candles(_candles([100, 102, 98, 100, 102, 104]), candidate)
+
+    assert len(result.trades) == 2
+    assert [trade.stake_usdt for trade in result.trades] == [500.0, 500.0]
+    assert result.stake_usdt == 500.0
+
+
 def test_training_compares_multiple_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
     candidates = [
         _candidate(),

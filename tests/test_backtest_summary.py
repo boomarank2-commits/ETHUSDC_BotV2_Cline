@@ -108,6 +108,7 @@ def _strategy_v1_report(run_id: str) -> StrategyV1TrainingBlindtestReport:
         quote_asset="USDC",
         start_capital_reference=100.0,
         stake_usdt=100.0,
+        profile="normal",
         selected_candidate=StrategyV1Candidate(
             "momentum_breakout", "v1_selected", 1, None, 0.001, 0.004, 0.004, 2, 0, 10.0, 100.0
         ),
