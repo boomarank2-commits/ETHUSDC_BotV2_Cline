@@ -13,6 +13,7 @@ def _pipeline_result(summary_path: str | None = "summary.json") -> PreparationPi
         data_preparation_report_path="data.json",
         train_blind_split_report_path="split.json",
         buy_hold_benchmark_report_path="benchmark.json" if summary_path else None,
+        strategy_v0_report_path="strategy.json" if summary_path else None,
         backtest_summary_path=summary_path,
         progress_path="progress.json",
         error=None if summary_path else "missing summary",

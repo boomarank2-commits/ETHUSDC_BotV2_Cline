@@ -9,6 +9,10 @@ from src.backtest.buy_hold_benchmark import (
 from src.backtest.run_finalizer import mark_backtest_run_completed, mark_backtest_run_failed
 from src.backtest.run_initializer import initialize_backtest_run
 from src.backtest.run_progress import BacktestRunProgress, save_run_progress
+from src.backtest.strategy_v0_report import (
+    build_strategy_v0_training_blindtest_report,
+    save_strategy_v0_report,
+)
 from src.data.data_preparation_report import (
     build_data_preparation_report,
     save_data_preparation_report,
@@ -31,6 +35,7 @@ class PreparationPipelineResult:
     data_preparation_report_path: str
     train_blind_split_report_path: str
     buy_hold_benchmark_report_path: str | None
+    strategy_v0_report_path: str | None
     backtest_summary_path: str | None
     progress_path: str
     error: str | None
@@ -65,6 +70,7 @@ def run_backtest_preparation_pipeline(
     data_report_path = ""
     split_report_path = ""
     benchmark_report_path: str | None = None
+    strategy_v0_report_path: str | None = None
     summary_path: str | None = None
     progress_path = ""
     try:
@@ -82,7 +88,15 @@ def run_backtest_preparation_pipeline(
             mark_backtest_run_failed(run_id, error)
             progress_path = _save_progress(run_id, "failed", "data_preparation", 100.0, error=error)
             return PreparationPipelineResult(
-                run_id, "failed", data_report_path, "", None, summary_path, progress_path, error
+                run_id,
+                "failed",
+                data_report_path,
+                "",
+                None,
+                None,
+                summary_path,
+                progress_path,
+                error,
             )
 
         progress_path = _save_progress(run_id, "running", "train_blind_split", 75.0)
@@ -91,6 +105,8 @@ def run_backtest_preparation_pipeline(
         split_report_path = str(save_train_blind_split_report(split_report))
         benchmark_report = build_buy_hold_benchmark_report(run_id, split)
         benchmark_report_path = str(save_buy_hold_benchmark_report(benchmark_report))
+        strategy_v0_report = build_strategy_v0_training_blindtest_report(run_id, split)
+        strategy_v0_report_path = str(save_strategy_v0_report(strategy_v0_report))
         summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
         progress_path = _save_progress(run_id, "completed", "completed", 100.0)
         mark_backtest_run_completed(run_id)
@@ -100,6 +116,7 @@ def run_backtest_preparation_pipeline(
             data_report_path,
             split_report_path,
             benchmark_report_path,
+            strategy_v0_report_path,
             summary_path,
             progress_path,
             None,
@@ -124,6 +141,7 @@ def run_backtest_preparation_pipeline(
             data_report_path,
             split_report_path,
             benchmark_report_path,
+            strategy_v0_report_path,
             summary_path,
             progress_path,
             error_message,

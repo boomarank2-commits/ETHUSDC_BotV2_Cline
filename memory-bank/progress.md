@@ -541,3 +541,15 @@ Changed:
 
 Purpose:
 - UI now shows a larger scrollable dashboard with last run, data quality, windows and Buy-&-Hold sections.
+
+## 2026-06-12 - Strategy V0 training/blindtest engine added
+
+Created/changed:
+- src/backtest/strategy_v0.py
+- src/backtest/strategy_v0_report.py
+- src/backtest/preparation_pipeline.py
+- src/reports/backtest_summary.py
+- strategy/pipeline/summary tests
+
+Purpose:
+- Train fixed LONG-only Strategy V0 candidates, freeze best training candidate, run blindtest, save report, and prefer V0 in summary.

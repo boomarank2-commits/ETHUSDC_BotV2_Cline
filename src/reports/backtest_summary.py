@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.backtest.buy_hold_benchmark import load_buy_hold_benchmark_report
+from src.backtest.strategy_v0_report import load_strategy_v0_report
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
 from src.data.data_preparation_report import load_data_preparation_report
 from src.data.train_blind_split_report import load_train_blind_split_report
@@ -69,6 +70,30 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
         )
 
     split_report = load_train_blind_split_report(run_id)
+    try:
+        strategy_report = load_strategy_v0_report(run_id)
+        return BacktestSummary(
+            run_id=run_id,
+            status="completed",
+            symbol=strategy_report.symbol,
+            quote_asset=strategy_report.quote_asset,
+            start_capital=strategy_report.start_capital,
+            final_capital=strategy_report.blindtest_final_capital,
+            total_pnl=strategy_report.blindtest_total_pnl,
+            total_pnl_pct=strategy_report.blindtest_total_pnl_pct,
+            trade_count=strategy_report.blindtest_trade_count,
+            training_start=split_report.training_start,
+            training_end=split_report.training_end,
+            blindtest_start=split_report.blindtest_start,
+            blindtest_end=split_report.blindtest_end,
+            candle_count=data_report.candle_count,
+            detected_gaps=data_report.detected_gaps,
+            usable_for_backtest=True,
+            message="Strategy V0 training+blindtest completed",
+        )
+    except FileNotFoundError:
+        pass
+
     benchmark_report = load_buy_hold_benchmark_report(run_id)
     return BacktestSummary(
         run_id=run_id,

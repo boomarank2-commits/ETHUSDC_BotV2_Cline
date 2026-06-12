@@ -3,6 +3,11 @@ from dataclasses import fields
 import pytest
 
 from src.backtest.buy_hold_benchmark import BuyHoldBenchmarkReport, save_buy_hold_benchmark_report
+from src.backtest.strategy_v0 import StrategyV0Candidate
+from src.backtest.strategy_v0_report import (
+    StrategyV0TrainingBlindtestReport,
+    save_strategy_v0_report,
+)
 from src.data.data_preparation_report import DataPreparationReport, save_data_preparation_report
 from src.data.train_blind_split_report import TrainBlindSplitReport, save_train_blind_split_report
 from src.reports.backtest_summary import (
@@ -68,6 +73,29 @@ def _save_completed_reports(run_id: str) -> None:
     save_buy_hold_benchmark_report(_benchmark_report(run_id))
 
 
+def _strategy_report(run_id: str) -> StrategyV0TrainingBlindtestReport:
+    return StrategyV0TrainingBlindtestReport(
+        run_id=run_id,
+        symbol="ETHUSDC",
+        quote_asset="USDC",
+        start_capital=100.0,
+        selected_candidate=StrategyV0Candidate("selected", 1, 0.001, 0.004, 0.004, 3, 10.0),
+        training_final_capital=130.0,
+        training_total_pnl=30.0,
+        training_total_pnl_pct=30.0,
+        training_trade_count=2,
+        blindtest_final_capital=111.0,
+        blindtest_total_pnl=11.0,
+        blindtest_total_pnl_pct=11.0,
+        blindtest_trade_count=3,
+        blindtest_winning_trades=2,
+        blindtest_losing_trades=1,
+        blindtest_max_drawdown=4.0,
+        blindtest_start="2026-01-01T00:03:00",
+        blindtest_end="2026-01-01T00:04:00",
+    )
+
+
 def test_completed_summary_is_built_from_reports() -> None:
     run_id = "run_20260612_210001"
     _save_completed_reports(run_id)
@@ -87,6 +115,19 @@ def test_result_values_come_from_buy_hold_benchmark() -> None:
     assert summary.total_pnl == 20.0
     assert summary.total_pnl_pct == 20.0
     assert summary.trade_count == 1
+
+
+def test_summary_prefers_strategy_v0_over_buy_hold() -> None:
+    run_id = "run_20260612_210007"
+    _save_completed_reports(run_id)
+    save_strategy_v0_report(_strategy_report(run_id))
+
+    summary = build_backtest_summary(run_id)
+
+    assert summary.final_capital == 111.0
+    assert summary.total_pnl == 11.0
+    assert summary.trade_count == 3
+    assert summary.message == "Strategy V0 training+blindtest completed"
 
 
 def test_windows_come_from_train_blind_split_report() -> None:
