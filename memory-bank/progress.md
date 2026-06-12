@@ -260,3 +260,57 @@ Tests:
 - python -m pytest: 58 passed in 0.10s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 28 files already formatted.
+
+## 2026-06-12 - Backtest run initialization created
+
+Created:
+- src/backtest/run_initializer.py
+- tests/test_backtest_run_initializer.py
+
+Purpose:
+- Create a new run_id.
+- Create a default BacktestRunRequest.
+- Create the Run-Report folder.
+- Save run_request.json.
+- Set runtime_state.json to running with active_run_id.
+
+Scope:
+- Technical initialization only.
+- No trading code.
+- No real backtest.
+- No backtest calculation.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 68 passed in 0.13s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 30 files already formatted.
+
+## 2026-06-12 - Backtest run finalization created
+
+Created:
+- src/backtest/run_finalizer.py
+- tests/test_backtest_run_finalizer.py
+
+Purpose:
+- Mark a run as completed in runtime_state.json.
+- Mark a run as failed in runtime_state.json with last_error.
+- Ensure the Run-Report folder exists.
+
+Scope:
+- Technical finalization only.
+- No trading code.
+- No real backtest.
+- No backtest calculation.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 76 passed in 0.15s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 32 files already formatted.
