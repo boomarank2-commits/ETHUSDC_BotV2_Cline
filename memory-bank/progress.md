@@ -487,3 +487,14 @@ Created:
 
 Purpose:
 - Start existing benchmark pipeline from Tkinter and display BacktestSummary values.
+
+## 2026-06-12 - Binance public kline downloader created
+
+Created:
+- src/data/binance_kline_client.py
+- src/data/binance_candle_downloader.py
+- tests/test_binance_kline_client.py
+- tests/test_binance_candle_downloader.py
+
+Purpose:
+- Download public Binance Spot ETHUSDC 1m klines to local CSV and update data_catalog.json.
