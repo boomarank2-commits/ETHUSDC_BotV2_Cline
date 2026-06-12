@@ -450,3 +450,12 @@ Created:
 
 Purpose:
 - Calculate and save a simple LONG-only Spot Buy-and-Hold benchmark for the blindtest window.
+
+## 2026-06-12 - Preparation pipeline benchmark extended
+
+Changed:
+- src/backtest/preparation_pipeline.py
+- tests/test_preparation_pipeline.py
+
+Purpose:
+- Successful preparation now also saves buy_hold_benchmark_report.json.

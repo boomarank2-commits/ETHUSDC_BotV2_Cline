@@ -2,6 +2,10 @@
 
 from dataclasses import dataclass
 
+from src.backtest.buy_hold_benchmark import (
+    build_buy_hold_benchmark_report,
+    save_buy_hold_benchmark_report,
+)
 from src.backtest.run_finalizer import mark_backtest_run_completed, mark_backtest_run_failed
 from src.backtest.run_initializer import initialize_backtest_run
 from src.backtest.run_progress import BacktestRunProgress, save_run_progress
@@ -25,6 +29,7 @@ class PreparationPipelineResult:
     status: str
     data_preparation_report_path: str
     train_blind_split_report_path: str
+    buy_hold_benchmark_report_path: str | None
     progress_path: str
     error: str | None
 
@@ -57,6 +62,7 @@ def run_backtest_preparation_pipeline(
     run_id = ""
     data_report_path = ""
     split_report_path = ""
+    benchmark_report_path: str | None = None
     progress_path = ""
     try:
         request = initialize_backtest_run(time_budget_minutes=time_budget_minutes)
@@ -72,17 +78,25 @@ def run_backtest_preparation_pipeline(
             mark_backtest_run_failed(run_id, error)
             progress_path = _save_progress(run_id, "failed", "data_preparation", 100.0, error=error)
             return PreparationPipelineResult(
-                run_id, "failed", data_report_path, "", progress_path, error
+                run_id, "failed", data_report_path, "", None, progress_path, error
             )
 
         progress_path = _save_progress(run_id, "running", "train_blind_split", 75.0)
         split = build_train_blind_split(dataset)
         split_report = build_train_blind_split_report(run_id, split)
         split_report_path = str(save_train_blind_split_report(split_report))
+        benchmark_report = build_buy_hold_benchmark_report(run_id, split)
+        benchmark_report_path = str(save_buy_hold_benchmark_report(benchmark_report))
         progress_path = _save_progress(run_id, "completed", "completed", 100.0)
         mark_backtest_run_completed(run_id)
         return PreparationPipelineResult(
-            run_id, "completed", data_report_path, split_report_path, progress_path, None
+            run_id,
+            "completed",
+            data_report_path,
+            split_report_path,
+            benchmark_report_path,
+            progress_path,
+            None,
         )
     except Exception as error:  # noqa: BLE001
         error_message = str(error)
@@ -95,5 +109,11 @@ def run_backtest_preparation_pipeline(
             except Exception:  # noqa: BLE001
                 pass
         return PreparationPipelineResult(
-            run_id, "failed", data_report_path, split_report_path, progress_path, error_message
+            run_id,
+            "failed",
+            data_report_path,
+            split_report_path,
+            benchmark_report_path,
+            progress_path,
+            error_message,
         )

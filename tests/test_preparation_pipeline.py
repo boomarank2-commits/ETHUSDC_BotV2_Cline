@@ -5,6 +5,7 @@ import pytest
 
 import src.backtest.preparation_pipeline as pipeline_module
 import src.data.train_blind_split as split_module
+from src.backtest.buy_hold_benchmark import load_buy_hold_benchmark_report
 from src.backtest.preparation_pipeline import (
     PreparationPipelineResult,
     run_backtest_preparation_pipeline,
@@ -67,6 +68,29 @@ def test_successful_pipeline_creates_train_blind_split_report(fast_success_pipel
     assert Path(result.train_blind_split_report_path).is_file()
 
 
+def test_successful_pipeline_creates_buy_hold_benchmark_report(
+    fast_success_pipeline: None,
+) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert result.buy_hold_benchmark_report_path is not None
+    assert Path(result.buy_hold_benchmark_report_path).is_file()
+
+
+def test_result_contains_buy_hold_benchmark_report_path(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert result.buy_hold_benchmark_report_path is not None
+
+
+def test_loaded_buy_hold_benchmark_has_one_trade(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    report = load_buy_hold_benchmark_report(result.run_id)
+
+    assert report.trade_count == 1
+
+
 def test_successful_pipeline_sets_completed_status(fast_success_pipeline: None) -> None:
     result = run_backtest_preparation_pipeline()
 
@@ -103,6 +127,7 @@ def test_not_enough_dataset_fails_and_saves_data_report(tmp_path: Path) -> None:
 
     assert result.status == "failed"
     assert Path(result.data_preparation_report_path).is_file()
+    assert result.buy_hold_benchmark_report_path is None
 
 
 def test_pipeline_result_has_no_trade_pnl_or_signal_fields() -> None:
@@ -111,3 +136,12 @@ def test_pipeline_result_has_no_trade_pnl_or_signal_fields() -> None:
     assert "trade" not in field_names
     assert "pnl" not in field_names
     assert "signal" not in field_names
+
+
+def test_pipeline_result_has_no_short_futures_margin_or_leverage_fields() -> None:
+    field_names = {field.name for field in fields(PreparationPipelineResult)}
+
+    assert "short" not in field_names
+    assert "futures" not in field_names
+    assert "margin" not in field_names
+    assert "leverage" not in field_names
