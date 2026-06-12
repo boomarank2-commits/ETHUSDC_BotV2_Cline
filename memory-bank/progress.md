@@ -414,3 +414,12 @@ Changed:
 
 Purpose:
 - Avoid generating and writing a full 730+365 day candle CSV in unit tests while keeping EXPECTED_MIN_CANDLES unchanged.
+
+## 2026-06-12 - Train/blind candle split created
+
+Created:
+- src/data/train_blind_split.py
+- tests/test_train_blind_split.py
+
+Purpose:
+- Split ETHUSDC 1m CandleDataset into technical 730 day training and 365 day blindtest windows.
