@@ -378,3 +378,12 @@ Created:
 
 Purpose:
 - Reference local ETHUSDC 1m candle CSV files via configs/data_catalog.json.
+
+## 2026-06-12 - Local candle loader created
+
+Created:
+- src/data/local_candle_loader.py
+- tests/test_local_candle_loader.py
+
+Purpose:
+- Load local ETHUSDC 1m CandleDataset data through configs/data_catalog.json and build quality reports.
