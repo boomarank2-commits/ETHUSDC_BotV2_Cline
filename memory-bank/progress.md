@@ -140,3 +140,19 @@ Tests:
 - python -m pytest: 23 passed in 0.05s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 18 files already formatted.
+
+## 2026-06-12 - Blindtest and Test Trade purpose documented
+
+Updated documentation:
+- docs/BACKTEST_TRUTH.md
+- docs/UI_TRUTH.md
+- memory-bank/productContext.md
+
+Confirmed additions:
+- Blindtest should later provide an expectation frame for Paper and Live, not only total profit or loss.
+- Paper/Live results clearly worse or better than the blindtest frame are analysis triggers.
+- Later Test Trade button means exactly one complete trade after conscious configuration takeover, with diagnostic comparison data, then automatic stop.
+
+Scope:
+- Documentation only.
+- No code changed.

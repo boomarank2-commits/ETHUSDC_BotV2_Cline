@@ -13,6 +13,19 @@ The first build phase is the clean backtest core.
 The later UI should control and display the bot.
 It must not contain trading logic.
 
+## Later Test Trade Goal
+
+A later Test Trade button is planned.
+
+A Test Trade means:
+- only after consciously taken-over configuration
+- the bot waits for a learned profitable situation
+- it executes exactly one complete trade from entry to exit
+- it collects as much diagnostic and comparison data as possible
+- it documents deviations from backtest expectation, for example later TP/SL trigger, different execution, slippage or timing
+- it stops automatically afterwards
+- it does not start a second trade
+
 ## Forbidden For Now
 
 Do not build:

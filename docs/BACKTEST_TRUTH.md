@@ -37,6 +37,26 @@ Blindtest must not:
 - create new setups
 - use future information
 
+## Blindtest Purpose
+
+The 365 day blindtest must not only show total profit or loss.
+
+It should later provide an expectation frame for Paper and Live.
+
+The blindtest should later make at least these views analyzable:
+- result per month
+- best months
+- worst months
+- positive months
+- negative months
+- neutral months
+- best and worst periods
+- normal expected monthly range
+- warning signal when Paper or Live after takeover runs clearly outside the blindtest frame
+
+If Paper or Live runs clearly worse than the blindtest frame, this is an analysis trigger.
+If Paper or Live runs clearly better than the blindtest frame, this is also an analysis trigger because backtest and live behavior may not be identical.
+
 ## Capital Simulation
 
 If the backtest starts with 100 USDC, the result must honestly show what would have happened to that 100 USDC.
