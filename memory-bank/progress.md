@@ -396,3 +396,21 @@ Created:
 
 Purpose:
 - Save/load a technical local candle data readiness report per run.
+
+## 2026-06-12 - Test runtime optimized
+
+Changed:
+- tests/test_candle_quality.py
+- src/data/candle_quality.py
+
+Purpose:
+- Avoid generating a full 730+365 day candle list in unit tests while keeping EXPECTED_MIN_CANDLES unchanged.
+
+## 2026-06-12 - Data preparation runtime optimized
+
+Changed:
+- tests/test_data_preparation_report.py
+- src/data/data_preparation_report.py
+
+Purpose:
+- Avoid generating and writing a full 730+365 day candle CSV in unit tests while keeping EXPECTED_MIN_CANDLES unchanged.

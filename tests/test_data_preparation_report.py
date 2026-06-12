@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -6,7 +5,7 @@ import pytest
 from src.common.report_paths import get_run_report_dir
 from src.data.candle_csv_io import save_candle_dataset_to_csv
 from src.data.candle_dataset import CandleDataset
-from src.data.candle_quality import EXPECTED_MIN_CANDLES
+from src.data.candle_quality import EXPECTED_MIN_CANDLES, CandleQualityReport
 from src.data.candle_schema import Candle
 from src.data.data_catalog import CandleDataCatalogEntry, get_catalog_path, save_data_catalog
 from src.data.data_preparation_report import (
@@ -107,14 +106,24 @@ def test_invalid_run_id_is_rejected(tmp_path: Path) -> None:
         build_data_preparation_report("../unsafe")
 
 
-def test_large_gap_free_dataset_is_usable_for_backtest(tmp_path: Path) -> None:
-    start = datetime.fromisoformat("2026-01-01T00:00:00")
-    candles = [
-        _candle((start + timedelta(minutes=minute)).isoformat())
-        for minute in range(EXPECTED_MIN_CANDLES)
-    ]
-    _write_dataset_to_catalog(tmp_path, CandleDataset("ETHUSDC", "1m", candles))
+def test_large_gap_free_dataset_is_usable_for_backtest() -> None:
+    quality = CandleQualityReport(
+        symbol="ETHUSDC",
+        interval="1m",
+        candle_count=EXPECTED_MIN_CANDLES,
+        first_open_time="2026-01-01T00:00:00",
+        last_open_time="2029-01-01T00:00:00",
+        duplicate_open_times=0,
+        sorted_ascending=True,
+        detected_gaps=0,
+        expected_min_candles=EXPECTED_MIN_CANDLES,
+        has_required_lookback=True,
+    )
 
-    report = build_data_preparation_report("run_20260612_180008")
+    report = build_data_preparation_report("run_20260612_180008", quality=quality)
     assert report.usable_for_backtest is True
     assert report.reason is None
+
+
+def test_expected_min_candles_keeps_confirmed_730_365_rule() -> None:
+    assert EXPECTED_MIN_CANDLES == (730 + 365) * 24 * 60

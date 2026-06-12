@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
+from src.data.candle_quality import CandleQualityReport
 from src.data.local_candle_loader import build_local_candle_quality_from_catalog
 
 DATA_PREPARATION_REPORT_FILENAME = "data_preparation_report.json"
@@ -45,10 +46,14 @@ def _build_unusable_reason(has_required_lookback: bool, detected_gaps: int) -> s
     return "; ".join(reasons)
 
 
-def build_data_preparation_report(run_id: str) -> DataPreparationReport:
+def build_data_preparation_report(
+    run_id: str,
+    quality: CandleQualityReport | None = None,
+) -> DataPreparationReport:
     """Build a technical data preparation report without backtest calculation."""
     get_run_report_dir(run_id)
-    quality = build_local_candle_quality_from_catalog()
+    if quality is None:
+        quality = build_local_candle_quality_from_catalog()
     usable_for_backtest = quality.has_required_lookback and quality.detected_gaps == 0
     return DataPreparationReport(
         run_id=run_id,

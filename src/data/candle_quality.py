@@ -33,7 +33,10 @@ def _parse_open_time(open_time: str) -> datetime:
         raise ValueError(msg) from error
 
 
-def build_candle_quality_report(dataset: CandleDataset) -> CandleQualityReport:
+def build_candle_quality_report(
+    dataset: CandleDataset,
+    expected_min_candles: int = EXPECTED_MIN_CANDLES,
+) -> CandleQualityReport:
     """Build a technical candle quality report without trading or backtest logic."""
     open_times = [candle.open_time for candle in dataset.candles]
     parsed_times = [_parse_open_time(open_time) for open_time in open_times]
@@ -55,6 +58,6 @@ def build_candle_quality_report(dataset: CandleDataset) -> CandleQualityReport:
         duplicate_open_times=duplicate_open_times,
         sorted_ascending=sorted_ascending,
         detected_gaps=detected_gaps,
-        expected_min_candles=EXPECTED_MIN_CANDLES,
-        has_required_lookback=len(dataset.candles) >= EXPECTED_MIN_CANDLES,
+        expected_min_candles=expected_min_candles,
+        has_required_lookback=len(dataset.candles) >= expected_min_candles,
     )

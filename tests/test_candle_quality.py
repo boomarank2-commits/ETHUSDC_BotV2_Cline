@@ -1,5 +1,3 @@
-from datetime import datetime, timedelta
-
 import pytest
 
 from src.data.candle_dataset import CandleDataset
@@ -50,16 +48,15 @@ def test_has_required_lookback_is_false_for_small_dataset() -> None:
 
 
 def test_has_required_lookback_is_true_for_large_dataset() -> None:
-    start = datetime.fromisoformat("2026-01-01T00:00:00")
-    candles = [
-        _candle((start + timedelta(minutes=minute)).isoformat())
-        for minute in range(EXPECTED_MIN_CANDLES)
-    ]
-    dataset = CandleDataset("ETHUSDC", "1m", candles)
+    dataset = _dataset(["2026-01-01T00:00:00", "2026-01-01T00:01:00"])
 
-    report = build_candle_quality_report(dataset)
+    report = build_candle_quality_report(dataset, expected_min_candles=2)
 
     assert report.has_required_lookback is True
+
+
+def test_expected_min_candles_keeps_confirmed_730_365_rule() -> None:
+    assert EXPECTED_MIN_CANDLES == (730 + 365) * 24 * 60
 
 
 def test_unparseable_open_time_is_rejected() -> None:
