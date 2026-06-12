@@ -235,3 +235,28 @@ Tests:
 - python -m pytest: 50 passed in 0.08s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 26 files already formatted.
+
+## 2026-06-12 - Backtest run request IO created
+
+Created:
+- src/backtest/run_request_io.py
+- tests/test_backtest_run_request_io.py
+
+Purpose:
+- Save BacktestRunRequest as readable JSON in reports/backtests/<run_id>/run_request.json.
+- Load the same JSON back through the request schema.
+
+Scope:
+- Technical writer/reader only.
+- No trading code.
+- No backtest execution.
+- No backtest calculation.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 58 passed in 0.10s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 28 files already formatted.
