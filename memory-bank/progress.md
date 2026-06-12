@@ -351,3 +351,12 @@ Created:
 
 Purpose:
 - Validate technical ETHUSDC 1m candle data contracts before any later data loading.
+
+## 2026-06-12 - Candle CSV IO created
+
+Created:
+- src/data/candle_csv_io.py
+- tests/test_candle_csv_io.py
+
+Purpose:
+- Save and load local ETHUSDC 1m candle datasets as CSV without download or Binance access.
