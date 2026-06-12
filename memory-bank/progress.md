@@ -441,3 +441,12 @@ Created:
 
 Purpose:
 - Run technical preparation: initialize run, load local candles, save data and split reports, update progress, finalize run.
+
+## 2026-06-12 - Buy-and-Hold benchmark created
+
+Created:
+- src/backtest/buy_hold_benchmark.py
+- tests/test_buy_hold_benchmark.py
+
+Purpose:
+- Calculate and save a simple LONG-only Spot Buy-and-Hold benchmark for the blindtest window.
