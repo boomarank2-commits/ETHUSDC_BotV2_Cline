@@ -477,3 +477,13 @@ Changed:
 
 Purpose:
 - Pipeline now saves backtest_summary.json for successful runs and data-preparation failures when possible.
+
+## 2026-06-12 - Minimal Tkinter benchmark UI created
+
+Created:
+- src/ui/backtest_ui_controller.py
+- src/ui/app.py
+- tests/test_backtest_ui_controller.py
+
+Purpose:
+- Start existing benchmark pipeline from Tkinter and display BacktestSummary values.
