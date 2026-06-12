@@ -387,3 +387,12 @@ Created:
 
 Purpose:
 - Load local ETHUSDC 1m CandleDataset data through configs/data_catalog.json and build quality reports.
+
+## 2026-06-12 - Data preparation report created
+
+Created:
+- src/data/data_preparation_report.py
+- tests/test_data_preparation_report.py
+
+Purpose:
+- Save/load a technical local candle data readiness report per run.
