@@ -326,3 +326,17 @@ Purpose:
 - Use Changed / Tests / Result / Next format.
 - Avoid repeated long negative lists unless there is risk.
 - Closely related files may be handled in one task.
+
+## 2026-06-12 - Backtest run progress created
+
+Created:
+- src/backtest/run_progress.py
+- tests/test_backtest_run_progress.py
+
+Purpose:
+- Save and load technical run progress in reports/backtests/<run_id>/progress.json.
+
+Tests:
+- python -m pytest
+- python -m ruff check . --no-cache
+- python -m ruff format --check . --no-cache
