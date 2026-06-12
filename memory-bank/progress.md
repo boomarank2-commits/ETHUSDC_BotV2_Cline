@@ -115,3 +115,28 @@ Tests:
 - python -m pytest: 16 passed in 0.04s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 16 files already formatted.
+
+## 2026-06-12 - Runtime state foundation created
+
+Created:
+- src/common/runtime_state.py
+- tests/test_runtime_state.py
+
+Purpose:
+- Technical runtime state file at configs/runtime_state.json.
+- Minimal status validation for idle, running, completed and failed.
+- Minimal active_run_id validation against unsafe paths.
+
+Scope:
+- Technical runtime-state foundation only.
+- No trading code.
+- No backtest code.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 23 passed in 0.05s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 18 files already formatted.
