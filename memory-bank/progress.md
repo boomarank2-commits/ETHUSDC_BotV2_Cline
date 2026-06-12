@@ -369,3 +369,12 @@ Created:
 
 Purpose:
 - Build a technical quality report for local ETHUSDC 1m CandleDataset data.
+
+## 2026-06-12 - Local candle data catalog created
+
+Created:
+- src/data/data_catalog.py
+- tests/test_data_catalog.py
+
+Purpose:
+- Reference local ETHUSDC 1m candle CSV files via configs/data_catalog.json.
