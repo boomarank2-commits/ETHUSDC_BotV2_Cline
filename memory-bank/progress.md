@@ -65,3 +65,27 @@ Scope:
 Test:
 - python -m pytest
 - Result: 10 passed in 0.03s
+
+## 2026-06-12 - Minimal quality checks stabilized
+
+Checked:
+- python -m pytest
+- python -m ruff check .
+- python -m ruff format --check .
+
+Adjusted:
+- Ruff-only import / format cleanup.
+
+Final result:
+- pytest: 10 passed in 0.04s
+- ruff check: All checks passed.
+- ruff format --check: 13 files already formatted.
+
+Scope:
+- Technical quality standard only.
+- No trading code.
+- No backtest code.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
