@@ -576,3 +576,14 @@ Created/changed:
 
 Purpose:
 - Compare multiple LONG-only Strategy V1 families on training, freeze best candidate, blindtest with fixed 100 USDT stake, and prefer V1 in summary.
+
+## 2026-06-12 - Backtest data ensure flow added
+
+Created/changed:
+- src/data/candle_data_ensure.py
+- UI data/backtest controllers and Tkinter app
+- preparation pipeline and Strategy V1 report stake/profile handling
+- related tests
+
+Purpose:
+- Backtest start now checks/updates ETHUSDC 1m data before the pipeline and blocks runs with insufficient candles.

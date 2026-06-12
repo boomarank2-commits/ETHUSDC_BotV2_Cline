@@ -27,6 +27,7 @@ class StrategyV1TrainingBlindtestReport:
     quote_asset: str
     start_capital_reference: float
     stake_usdt: float
+    profile: str
     selected_candidate: StrategyV1Candidate
     training_family: str
     training_final_capital_reference: float
@@ -72,9 +73,13 @@ def build_strategy_v1_training_blindtest_report(
     split: TrainBlindSplit,
     start_capital_reference: float = 100.0,
     stake_usdt: float = 100.0,
+    profile: str = "normal",
 ) -> StrategyV1TrainingBlindtestReport:
     """Train on training candles, then run frozen V1 candidate on blindtest candles."""
     get_run_report_dir(run_id)
+    if profile not in ("conservative", "normal", "aggressive"):
+        msg = "profile must be conservative, normal or aggressive"
+        raise ValueError(msg)
     training_result = select_best_strategy_v1(split.training_candles, start_capital_reference)
     selected = StrategyV1Candidate(
         **{**asdict(training_result.candidate), "stake_usdt": stake_usdt}
@@ -90,6 +95,7 @@ def build_strategy_v1_training_blindtest_report(
         quote_asset=CONFIG.quote_asset,
         start_capital_reference=start_capital_reference,
         stake_usdt=stake_usdt,
+        profile=profile,
         selected_candidate=selected,
         training_family=selected.family,
         training_final_capital_reference=training_result.final_capital_reference,

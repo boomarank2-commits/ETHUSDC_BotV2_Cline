@@ -92,6 +92,28 @@ def test_successful_pipeline_creates_strategy_v1_report(fast_success_pipeline: N
     assert Path(result.strategy_v1_report_path).is_file()
 
 
+def test_pipeline_forwards_stake_and_profile_to_strategy_v1(
+    monkeypatch: pytest.MonkeyPatch,
+    fast_success_pipeline: None,
+) -> None:
+    captured: dict[str, object] = {}
+
+    original = pipeline_module.build_strategy_v1_training_blindtest_report
+
+    def capturing_build(run_id, split, **kwargs):
+        captured.update(kwargs)
+        return original(run_id, split)
+
+    monkeypatch.setattr(
+        pipeline_module, "build_strategy_v1_training_blindtest_report", capturing_build
+    )
+
+    run_backtest_preparation_pipeline(stake_usdt=1000.0, profile="conservative")
+
+    assert captured["stake_usdt"] == 1000.0
+    assert captured["profile"] == "conservative"
+
+
 def test_result_contains_buy_hold_benchmark_report_path(fast_success_pipeline: None) -> None:
     result = run_backtest_preparation_pipeline()
 

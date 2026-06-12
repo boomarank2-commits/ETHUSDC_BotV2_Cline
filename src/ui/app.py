@@ -4,7 +4,7 @@ import tkinter as tk
 from threading import Thread
 from tkinter import ttk
 
-from src.ui.backtest_ui_controller import BacktestUiResult, run_backtest_for_ui
+from src.ui.backtest_ui_controller import BacktestUiResult, BacktestUiSettings, run_backtest_for_ui
 from src.ui.data_download_controller import (
     DataDownloadUiResult,
     download_required_ethusdc_1m_data_for_ui,
@@ -45,14 +45,34 @@ class BacktestApp:
         self.root.title("ETHUSDC Bot V2 - Backtest Dashboard")
         self.root.geometry("900x650")
         self.status_var = tk.StringVar(value="Bereit")
+        self.stake_var = tk.StringVar(value="100")
+        self.profile_var = tk.StringVar(value="normal")
         controls = ttk.Frame(root)
         controls.pack(fill="x", padx=12, pady=8)
         self.download_button = ttk.Button(
             controls,
-            text="Daten laden/aktualisieren",
+            text="Daten prüfen/aktualisieren",
             command=self._start_download,
         )
         self.download_button.pack(side="left", padx=(0, 8))
+        ttk.Label(controls, text="Stake:").pack(side="left", padx=(0, 4))
+        self.stake_combo = ttk.Combobox(
+            controls,
+            textvariable=self.stake_var,
+            values=("100", "200", "500", "1000"),
+            width=8,
+            state="readonly",
+        )
+        self.stake_combo.pack(side="left", padx=(0, 8))
+        ttk.Label(controls, text="Profil:").pack(side="left", padx=(0, 4))
+        self.profile_combo = ttk.Combobox(
+            controls,
+            textvariable=self.profile_var,
+            values=("vorsichtig", "normal", "aggressiv"),
+            width=12,
+            state="readonly",
+        )
+        self.profile_combo.pack(side="left", padx=(0, 8))
         self.start_button = ttk.Button(
             controls,
             text="Backtest starten",
@@ -81,7 +101,7 @@ class BacktestApp:
     def _start_download(self) -> None:
         self.download_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
-        self.status_var.set("Daten werden geladen...")
+        self.status_var.set("Prüfe/aktualisiere Daten...")
         Thread(target=self._run_download_worker, daemon=True).start()
 
     def _run_download_worker(self) -> None:
@@ -98,7 +118,7 @@ class BacktestApp:
         pct = progress.get("progress_pct")
         last_open_time = progress.get("last_open_time")
         self.status_var.set(
-            f"Daten werden geladen... {_format_value(loaded)} Candles, {_format_value(pct)}%"
+            f"Prüfe/aktualisiere Daten... {_format_value(loaded)} Candles, {_format_value(pct)}%"
         )
         self._set_dashboard_text(
             "\n".join(
@@ -134,15 +154,23 @@ class BacktestApp:
         )
 
     def _start_backtest(self) -> None:
+        profile_map = {"vorsichtig": "conservative", "normal": "normal", "aggressiv": "aggressive"}
+        self.current_settings = BacktestUiSettings(
+            stake_usdt=float(self.stake_var.get()),
+            profile=profile_map[self.profile_var.get()],
+        )
+        self.download_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
-        self.status_var.set("Backtest läuft...")
+        self.status_var.set("Prüfe/aktualisiere Daten...")
         Thread(target=self._run_backtest_worker, daemon=True).start()
 
     def _run_backtest_worker(self) -> None:
-        result = run_backtest_for_ui()
+        self.root.after(0, lambda: self.status_var.set("Starte Backtest..."))
+        result = run_backtest_for_ui(self.current_settings)
         self.root.after(0, self._show_result, result)
 
     def _show_result(self, result: BacktestUiResult) -> None:
+        self.download_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.status_var.set(result.status)
         windows_present = bool(result.training_start and result.blindtest_start)

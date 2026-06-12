@@ -137,6 +137,69 @@ def test_strategy_v1_report_save_and_load(monkeypatch) -> None:
     assert load_strategy_v1_report(report.run_id) == report
 
 
+def test_report_uses_selected_stake_usdt(monkeypatch) -> None:
+    selected = _candidate()
+    used: list[StrategyV1Candidate] = []
+    monkeypatch.setattr(
+        report_module,
+        "select_best_strategy_v1",
+        lambda candles, start_capital_reference: StrategyV1Result(
+            selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
+        ),
+    )
+
+    def fake_run(candles, candidate, start_capital_reference=100.0):
+        used.append(candidate)
+        return StrategyV1Result(
+            candidate, 100.0, candidate.stake_usdt, 101.0, 1.0, 1.0, 1.0, 1, 1, 0, 0, 0.0, []
+        )
+
+    monkeypatch.setattr(report_module, "run_strategy_v1_on_candles", fake_run)
+
+    report = build_strategy_v1_training_blindtest_report(
+        "run_20260612_240004", _split(), stake_usdt=500.0
+    )
+
+    assert report.stake_usdt == 500.0
+    assert report.selected_candidate.stake_usdt == 500.0
+    assert used[0].stake_usdt == 500.0
+
+
+def test_report_stores_profile(monkeypatch) -> None:
+    selected = _candidate()
+    monkeypatch.setattr(
+        report_module,
+        "select_best_strategy_v1",
+        lambda candles, start_capital_reference: StrategyV1Result(
+            selected, 100.0, 100.0, 110.0, 10.0, 10.0, 1.0, 1, 1, 0, 0, 0.0, []
+        ),
+    )
+    monkeypatch.setattr(
+        report_module,
+        "run_strategy_v1_on_candles",
+        lambda candles, candidate, start_capital_reference=100.0: StrategyV1Result(
+            candidate, 100.0, candidate.stake_usdt, 101.0, 1.0, 1.0, 1.0, 1, 1, 0, 0, 0.0, []
+        ),
+    )
+
+    report = build_strategy_v1_training_blindtest_report(
+        "run_20260612_240005", _split(), profile="aggressive"
+    )
+
+    assert report.profile == "aggressive"
+
+
+def test_invalid_profile_is_rejected() -> None:
+    try:
+        build_strategy_v1_training_blindtest_report(
+            "run_20260612_240006", _split(), profile="invalid"
+        )
+    except ValueError as error:
+        assert "profile" in str(error)
+    else:
+        raise AssertionError("invalid profile must fail")
+
+
 def test_no_short_futures_margin_or_leverage_fields() -> None:
     field_names = {field.name for field in fields(StrategyV1TrainingBlindtestReport)}
 

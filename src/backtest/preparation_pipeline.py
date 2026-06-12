@@ -69,6 +69,8 @@ def _save_progress(
 
 def run_backtest_preparation_pipeline(
     time_budget_minutes: int | None = None,
+    stake_usdt: float = 100.0,
+    profile: str = "normal",
 ) -> PreparationPipelineResult:
     """Run technical preparation without trades, PnL, signals or optimization."""
     run_id = ""
@@ -114,7 +116,12 @@ def run_backtest_preparation_pipeline(
         benchmark_report_path = str(save_buy_hold_benchmark_report(benchmark_report))
         strategy_v0_report = build_strategy_v0_training_blindtest_report(run_id, split)
         strategy_v0_report_path = str(save_strategy_v0_report(strategy_v0_report))
-        strategy_v1_report = build_strategy_v1_training_blindtest_report(run_id, split)
+        strategy_v1_report = build_strategy_v1_training_blindtest_report(
+            run_id,
+            split,
+            stake_usdt=stake_usdt,
+            profile=profile,
+        )
         strategy_v1_report_path = str(save_strategy_v1_report(strategy_v1_report))
         summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
         progress_path = _save_progress(run_id, "completed", "completed", 100.0)

@@ -1,18 +1,10 @@
-"""UI controller for downloading public ETHUSDC 1m candle data."""
+"""UI controller for checking/updating public ETHUSDC 1m candle data."""
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Callable
 
 from src.common.config import CONFIG
-from src.data.binance_candle_downloader import (
-    DEFAULT_BINANCE_CANDLE_PATH,
-    update_ethusdc_1m_candles,
-)
-from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
-
-DOWNLOAD_BUFFER_DAYS = 2
-MILLISECONDS_PER_MINUTE = 60_000
+from src.data.candle_data_ensure import ensure_ethusdc_1m_data_ready
 
 
 @dataclass(frozen=True)
@@ -29,48 +21,31 @@ class DataDownloadUiResult:
     error: str | None
 
 
-def _calculate_download_window_ms(now: datetime) -> tuple[int, int]:
-    required_minutes = REQUIRED_CANDLE_COUNT + DOWNLOAD_BUFFER_DAYS * 24 * 60
-    end_time_ms = int(now.timestamp() * 1000)
-    start_time_ms = end_time_ms - required_minutes * MILLISECONDS_PER_MINUTE
-    return start_time_ms, end_time_ms
-
-
 def download_required_ethusdc_1m_data_for_ui(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> DataDownloadUiResult:
-    """Download enough public ETHUSDC 1m candles for the required lookback."""
+    """Ensure enough public ETHUSDC 1m candles for the required lookback."""
     try:
-        modes: list[str] = []
-
-        def capture_progress(progress: dict) -> None:
-            mode = progress.get("mode")
-            if isinstance(mode, str):
-                modes.append(mode)
-            if progress_callback is not None:
-                progress_callback(progress)
-
-        dataset = update_ethusdc_1m_candles(
-            output_path=DEFAULT_BINANCE_CANDLE_PATH,
-            required_candles=REQUIRED_CANDLE_COUNT,
-            safety_days=DOWNLOAD_BUFFER_DAYS,
-            progress_callback=capture_progress,
-        )
-        if "full_download" in modes:
+        ensure_result = ensure_ethusdc_1m_data_ready(progress_callback=progress_callback)
+        if not ensure_result.success:
+            message = ensure_result.message
+        elif ensure_result.full_download:
             message = "Daten vollständig neu geladen. Danach kann der Backtest gestartet werden."
-        elif "incremental_update" in modes:
-            message = "Daten aktualisiert. Danach kann der Backtest gestartet werden."
-        else:
+        elif ensure_result.incremental_update:
+            message = "Daten inkrementell aktualisiert. Danach kann der Backtest gestartet werden."
+        elif ensure_result.already_current:
             message = "Daten waren bereits aktuell. Danach kann der Backtest gestartet werden."
+        else:
+            message = ensure_result.message
         return DataDownloadUiResult(
-            success=True,
+            success=ensure_result.success,
             message=message,
             symbol=CONFIG.symbol,
             interval="1m",
-            candle_count=len(dataset.candles),
-            output_path=str(DEFAULT_BINANCE_CANDLE_PATH),
-            catalog_updated=True,
-            error=None,
+            candle_count=ensure_result.candle_count,
+            output_path=ensure_result.output_path,
+            catalog_updated=ensure_result.catalog_path is not None,
+            error=ensure_result.error,
         )
     except Exception as error:  # noqa: BLE001
         return DataDownloadUiResult(
