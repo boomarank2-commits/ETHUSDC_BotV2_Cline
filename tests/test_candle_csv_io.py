@@ -95,3 +95,12 @@ def test_wrong_interval_on_load_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         load_candle_dataset_from_csv(csv_path, interval="5m")
+
+
+def test_save_uses_atomic_temp_file_without_leftover(tmp_path: Path) -> None:
+    csv_path = tmp_path / "candles.csv"
+
+    save_candle_dataset_to_csv(_dataset(), csv_path)
+
+    assert csv_path.is_file()
+    assert not csv_path.with_suffix(".csv.tmp").exists()

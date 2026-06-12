@@ -13,11 +13,13 @@ CANDLE_CSV_FIELDS = ["open_time", "open", "high", "low", "close", "volume"]
 def save_candle_dataset_to_csv(dataset: CandleDataset, path: Path) -> Path:
     """Save a candle dataset to CSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as csv_file:
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    with temp_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=CANDLE_CSV_FIELDS)
         writer.writeheader()
         for candle in dataset.candles:
             writer.writerow(asdict(candle))
+    temp_path.replace(path)
     return path
 
 

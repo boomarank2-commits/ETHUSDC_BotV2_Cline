@@ -18,6 +18,7 @@ ONE_MINUTE_MS = 60_000
 MAX_EMPTY_PAGES = 1
 MAX_RETRIES = 3
 REQUEST_TIMEOUT_SECONDS = 30
+SAVE_EVERY_PAGES = 25
 
 
 def binance_kline_to_candle(kline: BinanceKline) -> Candle:
@@ -205,38 +206,49 @@ def _download_range_to_dataset(
     expected_candles = max(1, ((end_time_ms - start_time_ms) // ONE_MINUTE_MS) + 1)
     previous_next_start: int | None = None
     empty_pages = 0
+    pages_since_save = 0
 
-    while current_start <= end_time_ms:
-        page = _fetch_page_with_retries(current_start, end_time_ms, progress_callback, mode)
-        if not page:
-            empty_pages += 1
-            if empty_pages >= MAX_EMPTY_PAGES:
-                break
-            current_start += ONE_MINUTE_MS
-            continue
-        empty_pages = 0
-        new_klines = [kline for kline in page if kline.open_time_ms >= current_start]
-        if not new_klines:
-            msg = "Binance pagination did not return new klines"
-            raise RuntimeError(msg)
-        for candle in [binance_kline_to_candle(kline) for kline in new_klines]:
-            candles_by_open_time[candle.open_time] = candle
-        dataset = _dataset_from_map(candles_by_open_time)
-        _save_dataset_and_catalog(dataset, target_path)
-        _emit_progress(
-            progress_callback,
-            len(dataset.candles),
-            expected_candles,
-            new_klines[-1],
-            mode,
-        )
-        next_start = new_klines[-1].open_time_ms + ONE_MINUTE_MS
-        if previous_next_start is not None and next_start <= previous_next_start:
-            msg = "Binance pagination did not advance"
-            raise RuntimeError(msg)
-        previous_next_start = next_start
-        current_start = next_start
-    return _dataset_from_map(candles_by_open_time)
+    try:
+        while current_start <= end_time_ms:
+            page = _fetch_page_with_retries(current_start, end_time_ms, progress_callback, mode)
+            if not page:
+                empty_pages += 1
+                if empty_pages >= MAX_EMPTY_PAGES:
+                    break
+                current_start += ONE_MINUTE_MS
+                continue
+            empty_pages = 0
+            new_klines = [kline for kline in page if kline.open_time_ms >= current_start]
+            if not new_klines:
+                msg = "Binance pagination did not return new klines"
+                raise RuntimeError(msg)
+            for candle in [binance_kline_to_candle(kline) for kline in new_klines]:
+                candles_by_open_time[candle.open_time] = candle
+            dataset = _dataset_from_map(candles_by_open_time)
+            pages_since_save += 1
+            if pages_since_save >= SAVE_EVERY_PAGES:
+                _save_dataset_and_catalog(dataset, target_path)
+                pages_since_save = 0
+            _emit_progress(
+                progress_callback,
+                len(dataset.candles),
+                expected_candles,
+                new_klines[-1],
+                mode,
+            )
+            next_start = new_klines[-1].open_time_ms + ONE_MINUTE_MS
+            if previous_next_start is not None and next_start <= previous_next_start:
+                msg = "Binance pagination did not advance"
+                raise RuntimeError(msg)
+            previous_next_start = next_start
+            current_start = next_start
+    except Exception:
+        if candles_by_open_time:
+            _save_dataset_and_catalog(_dataset_from_map(candles_by_open_time), target_path)
+        raise
+    dataset = _dataset_from_map(candles_by_open_time)
+    _save_dataset_and_catalog(dataset, target_path)
+    return dataset
 
 
 def download_ethusdc_1m_candles(
