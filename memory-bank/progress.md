@@ -340,3 +340,14 @@ Tests:
 - python -m pytest
 - python -m ruff check . --no-cache
 - python -m ruff format --check . --no-cache
+
+## 2026-06-12 - Candle schema and dataset validation created
+
+Created:
+- src/data/candle_schema.py
+- src/data/candle_dataset.py
+- tests/test_candle_schema.py
+- tests/test_candle_dataset.py
+
+Purpose:
+- Validate technical ETHUSDC 1m candle data contracts before any later data loading.
