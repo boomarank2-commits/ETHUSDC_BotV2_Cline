@@ -459,3 +459,12 @@ Changed:
 
 Purpose:
 - Successful preparation now also saves buy_hold_benchmark_report.json.
+
+## 2026-06-12 - Backtest summary report created
+
+Created:
+- src/reports/backtest_summary.py
+- tests/test_backtest_summary.py
+
+Purpose:
+- Build/save/load a compact UI-readable summary from data, split and Buy-and-Hold reports.
