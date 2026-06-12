@@ -189,7 +189,7 @@ def test_controller_does_not_start_pipeline_when_ensure_has_one_candle(monkeypat
 
 
 def test_valid_stakes_are_accepted() -> None:
-    for stake in (100.0, 200.0, 500.0, 1000.0, 100000.0):
+    for stake in (5.0, 100.0, 1005.0, 100000.0):
         assert BacktestUiSettings(stake_usdt=stake).stake_usdt == stake
 
 
@@ -209,6 +209,15 @@ def test_negative_stake_is_rejected() -> None:
         assert "stake_usdt" in str(error)
     else:
         raise AssertionError("negative stake must fail")
+
+
+def test_non_numeric_stake_is_rejected() -> None:
+    try:
+        BacktestUiSettings(stake_usdt="abc")
+    except ValueError as error:
+        assert "stake_usdt" in str(error)
+    else:
+        raise AssertionError("non numeric stake must fail")
 
 
 def test_valid_profiles_are_accepted() -> None:

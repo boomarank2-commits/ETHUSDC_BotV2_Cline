@@ -73,8 +73,12 @@ def _emit_progress(
         {
             "phase": "data_ensure",
             "mode": mode,
+            "message": detail,
             "detail": detail,
+            "loaded_candles": extra.get("candle_count", 0),
+            "expected_candles": extra.get("required_candles", REQUIRED_CANDLE_COUNT),
             "progress_pct": progress_pct,
+            "last_open_time": extra.get("last_open_time"),
             **extra,
         }
     )
@@ -98,6 +102,32 @@ def _is_network_error(message: str) -> bool:
 def _is_current(last_open_time: str) -> bool:
     last_open_time_ms = _open_time_to_ms(last_open_time)
     return (_utc_now_ms() - last_open_time_ms) <= CURRENT_GRACE_MINUTES * ONE_MINUTE_MS
+
+
+def _normalize_downloader_progress(
+    progress_callback: Callable[[dict], None] | None,
+) -> Callable[[dict], None] | None:
+    if progress_callback is None:
+        return None
+
+    def wrapped(progress: dict) -> None:
+        mode = progress.get("mode", "download")
+        message = progress.get("message") or f"ETHUSDC 1m Daten: {mode}"
+        progress_callback(
+            {
+                "phase": progress.get("phase", "data_ensure"),
+                "mode": mode,
+                "message": message,
+                "detail": progress.get("detail", message),
+                "loaded_candles": progress.get("loaded_candles", progress.get("candle_count", 0)),
+                "expected_candles": progress.get("expected_candles", REQUIRED_CANDLE_COUNT),
+                "progress_pct": progress.get("progress_pct"),
+                "last_open_time": progress.get("last_open_time"),
+                **progress,
+            }
+        )
+
+    return wrapped
 
 
 def _final_result(
@@ -168,6 +198,7 @@ def ensure_ethusdc_1m_data_ready(
 ) -> CandleDataEnsureResult:
     """Check/update local ETHUSDC 1m data; never runs a backtest."""
     target_path = DEFAULT_BINANCE_CANDLE_PATH
+    download_progress_callback = _normalize_downloader_progress(progress_callback)
     try:
         _emit_progress(progress_callback, "checking", "Prüfe lokale ETHUSDC 1m Daten", 0.0)
         if not target_path.exists():
@@ -182,7 +213,7 @@ def ensure_ethusdc_1m_data_ready(
                 start_time_ms=start_time_ms,
                 end_time_ms=end_time_ms,
                 output_path=target_path,
-                progress_callback=progress_callback,
+                progress_callback=download_progress_callback,
             )
             return _final_result(
                 target_path,
@@ -211,7 +242,7 @@ def ensure_ethusdc_1m_data_ready(
                 start_time_ms=start_time_ms,
                 end_time_ms=end_time_ms,
                 output_path=target_path,
-                progress_callback=progress_callback,
+                progress_callback=download_progress_callback,
             )
             return _final_result(
                 target_path,
@@ -253,7 +284,7 @@ def ensure_ethusdc_1m_data_ready(
             output_path=target_path,
             required_candles=REQUIRED_CANDLE_COUNT,
             safety_days=DOWNLOAD_BUFFER_DAYS,
-            progress_callback=progress_callback,
+            progress_callback=download_progress_callback,
         )
         return _final_result(
             target_path,

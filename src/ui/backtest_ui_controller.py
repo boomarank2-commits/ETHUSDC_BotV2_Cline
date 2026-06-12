@@ -23,9 +23,15 @@ class BacktestUiSettings:
     profile: str = "normal"
 
     def __post_init__(self) -> None:
-        if self.stake_usdt <= 0:
+        try:
+            stake_usdt = float(self.stake_usdt)
+        except (TypeError, ValueError) as error:
+            msg = "stake_usdt must be numeric"
+            raise ValueError(msg) from error
+        if stake_usdt <= 0:
             msg = "stake_usdt must be positive"
             raise ValueError(msg)
+        object.__setattr__(self, "stake_usdt", stake_usdt)
         if self.profile not in ALLOWED_PROFILES:
             msg = "profile must be conservative, normal or aggressive"
             raise ValueError(msg)

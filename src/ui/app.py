@@ -45,22 +45,12 @@ class BacktestApp:
         self.progress_var = tk.StringVar(value="Fortschritt: 0%")
         self.detail_var = tk.StringVar(value="Detail: Noch kein Lauf gestartet")
         self.candles_var = tk.StringVar(value="Candles: Noch nicht geprüft")
-        self.stake_preset_var = tk.StringVar(value="100")
-        self.stake_custom_var = tk.StringVar(value="")
+        self.stake_var = tk.StringVar(value="100")
         self.profile_var = tk.StringVar(value="normal")
         controls = ttk.Frame(root)
         controls.pack(fill="x", padx=12, pady=8)
-        ttk.Label(controls, text="Stake Preset:").pack(side="left", padx=(0, 4))
-        self.stake_combo = ttk.Combobox(
-            controls,
-            textvariable=self.stake_preset_var,
-            values=("100", "200", "500", "1000"),
-            width=8,
-            state="readonly",
-        )
-        self.stake_combo.pack(side="left", padx=(0, 8))
-        ttk.Label(controls, text="Stake USDT:").pack(side="left", padx=(0, 4))
-        self.stake_entry = ttk.Entry(controls, textvariable=self.stake_custom_var, width=12)
+        ttk.Label(controls, text="Einsatz pro Trade (USDT):").pack(side="left", padx=(0, 4))
+        self.stake_entry = ttk.Entry(controls, textvariable=self.stake_var, width=12)
         self.stake_entry.pack(side="left", padx=(0, 8))
         ttk.Label(controls, text="Profil:").pack(side="left", padx=(0, 4))
         self.profile_combo = ttk.Combobox(
@@ -135,14 +125,14 @@ class BacktestApp:
         )
 
     def _read_stake_usdt(self) -> float:
-        raw_value = self.stake_custom_var.get().strip() or self.stake_preset_var.get().strip()
+        raw_value = self.stake_var.get().strip()
         try:
             stake = float(raw_value.replace(",", "."))
         except ValueError as error:
-            msg = "Stake USDT muss eine positive Zahl sein."
+            msg = "Einsatz pro Trade (USDT) muss eine positive Zahl sein."
             raise ValueError(msg) from error
         if stake <= 0:
-            msg = "Stake USDT muss größer als 0 sein."
+            msg = "Einsatz pro Trade (USDT) muss größer als 0 sein."
             raise ValueError(msg)
         return stake
 

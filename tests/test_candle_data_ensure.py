@@ -59,6 +59,10 @@ def test_missing_csv_emits_full_download_mode(
     ensure_module.ensure_ethusdc_1m_data_ready(progress_callback=events.append)
 
     assert "full_download" in [event.get("mode") for event in events]
+    assert all("loaded_candles" in event for event in events)
+    assert all("expected_candles" in event for event in events)
+    assert all("message" in event for event in events)
+    assert all("last_open_time" in event for event in events)
 
 
 def test_complete_current_csv_does_not_download(

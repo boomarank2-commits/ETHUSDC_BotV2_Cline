@@ -598,3 +598,13 @@ Changed:
 
 Purpose:
 - Avoid silent runs, separate required data loading, and unclear timeout failures in real UI use.
+
+## 2026-06-12 - Stake input simplified
+
+Changed:
+- Removed preset stake dropdown from normal UI workflow.
+- UI now has one field: Einsatz pro Trade (USDT), default 100.
+- Any positive numeric stake is accepted and passed to Strategy V1.
+
+Purpose:
+- Reduce UI confusion while keeping automatic data ensure before backtest start.
