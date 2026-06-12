@@ -49,7 +49,7 @@ class BacktestApp:
         self.profile_var = tk.StringVar(value="normal")
         controls = ttk.Frame(root)
         controls.pack(fill="x", padx=12, pady=8)
-        ttk.Label(controls, text="Einsatz pro Trade (USDT):").pack(side="left", padx=(0, 4))
+        ttk.Label(controls, text="Einsatz pro Trade (USDC):").pack(side="left", padx=(0, 4))
         self.stake_entry = ttk.Entry(controls, textvariable=self.stake_var, width=12)
         self.stake_entry.pack(side="left", padx=(0, 8))
         ttk.Label(controls, text="Profil:").pack(side="left", padx=(0, 4))
@@ -124,15 +124,15 @@ class BacktestApp:
             )
         )
 
-    def _read_stake_usdt(self) -> float:
+    def _read_stake_quote_amount(self) -> float:
         raw_value = self.stake_var.get().strip()
         try:
             stake = float(raw_value.replace(",", "."))
         except ValueError as error:
-            msg = "Einsatz pro Trade (USDT) muss eine positive Zahl sein."
+            msg = "Einsatz pro Trade (USDC) muss eine positive Zahl sein."
             raise ValueError(msg) from error
         if stake <= 0:
-            msg = "Einsatz pro Trade (USDT) muss größer als 0 sein."
+            msg = "Einsatz pro Trade (USDC) muss größer als 0 sein."
             raise ValueError(msg)
         return stake
 
@@ -140,7 +140,7 @@ class BacktestApp:
         profile_map = {"vorsichtig": "conservative", "normal": "normal", "aggressiv": "aggressive"}
         try:
             self.current_settings = BacktestUiSettings(
-                stake_usdt=self._read_stake_usdt(),
+                stake_quote_amount=self._read_stake_quote_amount(),
                 profile=profile_map[self.profile_var.get()],
             )
         except ValueError as error:

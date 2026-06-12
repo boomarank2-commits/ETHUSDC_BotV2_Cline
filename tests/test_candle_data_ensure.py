@@ -136,7 +136,7 @@ def test_outdated_csv_emits_incremental_update_mode(
     assert "incremental_update" in [event.get("mode") for event in events]
 
 
-def test_incomplete_csv_rebuilds_instead_of_continuing(
+def test_incomplete_csv_resumes_instead_of_continuing_blindly(
     monkeypatch: pytest.MonkeyPatch, fast_paths: Path
 ) -> None:
     save_candle_dataset_to_csv(_dataset(1), fast_paths)
@@ -154,8 +154,8 @@ def test_incomplete_csv_rebuilds_instead_of_continuing(
 
     assert called is True
     assert result.success is True
-    assert result.full_download is True
-    assert "neu aufgebaut" in result.message
+    assert result.full_download is False
+    assert "fortgesetzt" in result.message
 
 
 def test_incomplete_csv_emits_rebuild_mode(
@@ -172,7 +172,7 @@ def test_incomplete_csv_emits_rebuild_mode(
 
     ensure_module.ensure_ethusdc_1m_data_ready(progress_callback=events.append)
 
-    assert "rebuild_incomplete_csv" in [event.get("mode") for event in events]
+    assert "resume_partial_download" in [event.get("mode") for event in events]
 
 
 def test_incomplete_csv_failed_rebuild_stays_failed(
@@ -205,3 +205,4 @@ def test_network_error_returns_clear_message(
 
     assert result.success is False
     assert "Binance konnte nicht erreicht werden" in result.message
+    assert "fortgesetzt" in result.message

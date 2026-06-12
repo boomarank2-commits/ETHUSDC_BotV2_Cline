@@ -36,7 +36,7 @@ class BacktestSummary:
     detected_gaps: int | None
     usable_for_backtest: bool
     message: str
-    usdt_per_day: float | None = None
+    quote_per_day: float | None = None
     selected_family: str | None = None
     selected_candidate_name: str | None = None
     positive_days: int | None = None
@@ -98,7 +98,7 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
             detected_gaps=data_report.detected_gaps,
             usable_for_backtest=True,
             message="Strategy V1 training+blindtest completed",
-            usdt_per_day=strategy_v1_report.blindtest_usdt_per_day,
+            quote_per_day=strategy_v1_report.blindtest_quote_per_day,
             selected_family=strategy_v1_report.selected_candidate.family,
             selected_candidate_name=strategy_v1_report.selected_candidate.name,
             positive_days=strategy_v1_report.positive_days,

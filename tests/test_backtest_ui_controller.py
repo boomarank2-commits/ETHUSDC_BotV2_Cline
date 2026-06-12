@@ -190,32 +190,32 @@ def test_controller_does_not_start_pipeline_when_ensure_has_one_candle(monkeypat
 
 def test_valid_stakes_are_accepted() -> None:
     for stake in (5.0, 100.0, 1005.0, 100000.0):
-        assert BacktestUiSettings(stake_usdt=stake).stake_usdt == stake
+        assert BacktestUiSettings(stake_quote_amount=stake).stake_quote_amount == stake
 
 
 def test_invalid_stake_is_rejected() -> None:
     try:
-        BacktestUiSettings(stake_usdt=0.0)
+        BacktestUiSettings(stake_quote_amount=0.0)
     except ValueError as error:
-        assert "stake_usdt" in str(error)
+        assert "stake_quote_amount" in str(error)
     else:
         raise AssertionError("invalid stake must fail")
 
 
 def test_negative_stake_is_rejected() -> None:
     try:
-        BacktestUiSettings(stake_usdt=-1.0)
+        BacktestUiSettings(stake_quote_amount=-1.0)
     except ValueError as error:
-        assert "stake_usdt" in str(error)
+        assert "stake_quote_amount" in str(error)
     else:
         raise AssertionError("negative stake must fail")
 
 
 def test_non_numeric_stake_is_rejected() -> None:
     try:
-        BacktestUiSettings(stake_usdt="abc")
+        BacktestUiSettings(stake_quote_amount="abc")
     except ValueError as error:
-        assert "stake_usdt" in str(error)
+        assert "stake_quote_amount" in str(error)
     else:
         raise AssertionError("non numeric stake must fail")
 
@@ -249,9 +249,9 @@ def test_settings_are_forwarded_to_pipeline(monkeypatch) -> None:
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
     monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
 
-    run_backtest_for_ui(BacktestUiSettings(stake_usdt=500.0, profile="aggressive"))
+    run_backtest_for_ui(BacktestUiSettings(stake_quote_amount=500.0, profile="aggressive"))
 
-    assert captured["stake_usdt"] == 500.0
+    assert captured["stake_quote_amount"] == 500.0
     assert captured["profile"] == "aggressive"
 
 

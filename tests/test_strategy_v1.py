@@ -34,14 +34,14 @@ def test_default_candidates_have_multiple_families_and_expected_count() -> None:
 def test_fixed_stake_100_is_used() -> None:
     result = run_strategy_v1_on_candles(_candles([100, 102, 104]), _candidate())
 
-    assert result.trades[0].stake_usdt == 100.0
+    assert result.trades[0].stake_quote_amount == 100.0
 
 
 def test_after_loss_next_trade_uses_100_stake() -> None:
     result = run_strategy_v1_on_candles(_candles([100, 102, 98, 100, 102, 104]), _candidate())
 
     assert len(result.trades) == 2
-    assert [trade.stake_usdt for trade in result.trades] == [100.0, 100.0]
+    assert [trade.stake_quote_amount for trade in result.trades] == [100.0, 100.0]
     assert result.trades[0].net_pnl < 0
 
 
@@ -52,8 +52,8 @@ def test_each_trade_uses_selected_fixed_stake() -> None:
     result = run_strategy_v1_on_candles(_candles([100, 102, 98, 100, 102, 104]), candidate)
 
     assert len(result.trades) == 2
-    assert [trade.stake_usdt for trade in result.trades] == [500.0, 500.0]
-    assert result.stake_usdt == 500.0
+    assert [trade.stake_quote_amount for trade in result.trades] == [500.0, 500.0]
+    assert result.stake_quote_amount == 500.0
 
 
 def test_training_compares_multiple_candidates(monkeypatch: pytest.MonkeyPatch) -> None:

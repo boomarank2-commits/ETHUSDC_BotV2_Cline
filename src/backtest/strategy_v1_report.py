@@ -26,19 +26,19 @@ class StrategyV1TrainingBlindtestReport:
     symbol: str
     quote_asset: str
     start_capital_reference: float
-    stake_usdt: float
+    stake_quote_amount: float
     profile: str
     selected_candidate: StrategyV1Candidate
     training_family: str
     training_final_capital_reference: float
     training_total_net_pnl: float
     training_total_net_pnl_pct: float
-    training_usdt_per_day: float
+    training_quote_per_day: float
     training_trade_count: int
     blindtest_final_capital_reference: float
     blindtest_total_net_pnl: float
     blindtest_total_net_pnl_pct: float
-    blindtest_usdt_per_day: float
+    blindtest_quote_per_day: float
     blindtest_trade_count: int
     blindtest_winning_trades: int
     blindtest_losing_trades: int
@@ -72,7 +72,7 @@ def build_strategy_v1_training_blindtest_report(
     run_id: str,
     split: TrainBlindSplit,
     start_capital_reference: float = 100.0,
-    stake_usdt: float = 100.0,
+    stake_quote_amount: float = 100.0,
     profile: str = "normal",
     progress_callback: Callable[[dict], None] | None = None,
 ) -> StrategyV1TrainingBlindtestReport:
@@ -87,7 +87,7 @@ def build_strategy_v1_training_blindtest_report(
         progress_callback=progress_callback,
     )
     selected = StrategyV1Candidate(
-        **{**asdict(training_result.candidate), "stake_usdt": stake_usdt}
+        **{**asdict(training_result.candidate), "stake_quote_amount": stake_quote_amount}
     )
     if progress_callback is not None:
         progress_callback(
@@ -115,19 +115,19 @@ def build_strategy_v1_training_blindtest_report(
         symbol=split.symbol,
         quote_asset=CONFIG.quote_asset,
         start_capital_reference=start_capital_reference,
-        stake_usdt=stake_usdt,
+        stake_quote_amount=stake_quote_amount,
         profile=profile,
         selected_candidate=selected,
         training_family=selected.family,
         training_final_capital_reference=training_result.final_capital_reference,
         training_total_net_pnl=training_result.total_net_pnl,
         training_total_net_pnl_pct=training_result.total_net_pnl_pct,
-        training_usdt_per_day=training_result.usdt_per_day,
+        training_quote_per_day=training_result.quote_per_day,
         training_trade_count=training_result.trade_count,
         blindtest_final_capital_reference=blindtest_result.final_capital_reference,
         blindtest_total_net_pnl=blindtest_result.total_net_pnl,
         blindtest_total_net_pnl_pct=blindtest_result.total_net_pnl_pct,
-        blindtest_usdt_per_day=blindtest_result.usdt_per_day,
+        blindtest_quote_per_day=blindtest_result.quote_per_day,
         blindtest_trade_count=blindtest_result.trade_count,
         blindtest_winning_trades=blindtest_result.winning_trades,
         blindtest_losing_trades=blindtest_result.losing_trades,

@@ -137,7 +137,7 @@ def test_strategy_v1_report_save_and_load(monkeypatch) -> None:
     assert load_strategy_v1_report(report.run_id) == report
 
 
-def test_report_uses_selected_stake_usdt(monkeypatch) -> None:
+def test_report_uses_selected_stake_quote_amount(monkeypatch) -> None:
     selected = _candidate()
     used: list[StrategyV1Candidate] = []
     monkeypatch.setattr(
@@ -151,18 +151,30 @@ def test_report_uses_selected_stake_usdt(monkeypatch) -> None:
     def fake_run(candles, candidate, start_capital_reference=100.0):
         used.append(candidate)
         return StrategyV1Result(
-            candidate, 100.0, candidate.stake_usdt, 101.0, 1.0, 1.0, 1.0, 1, 1, 0, 0, 0.0, []
+            candidate,
+            100.0,
+            candidate.stake_quote_amount,
+            101.0,
+            1.0,
+            1.0,
+            1.0,
+            1,
+            1,
+            0,
+            0,
+            0.0,
+            [],
         )
 
     monkeypatch.setattr(report_module, "run_strategy_v1_on_candles", fake_run)
 
     report = build_strategy_v1_training_blindtest_report(
-        "run_20260612_240004", _split(), stake_usdt=500.0
+        "run_20260612_240004", _split(), stake_quote_amount=500.0
     )
 
-    assert report.stake_usdt == 500.0
-    assert report.selected_candidate.stake_usdt == 500.0
-    assert used[0].stake_usdt == 500.0
+    assert report.stake_quote_amount == 500.0
+    assert report.selected_candidate.stake_quote_amount == 500.0
+    assert used[0].stake_quote_amount == 500.0
 
 
 def test_report_stores_profile(monkeypatch) -> None:
@@ -178,7 +190,19 @@ def test_report_stores_profile(monkeypatch) -> None:
         report_module,
         "run_strategy_v1_on_candles",
         lambda candles, candidate, start_capital_reference=100.0: StrategyV1Result(
-            candidate, 100.0, candidate.stake_usdt, 101.0, 1.0, 1.0, 1.0, 1, 1, 0, 0, 0.0, []
+            candidate,
+            100.0,
+            candidate.stake_quote_amount,
+            101.0,
+            1.0,
+            1.0,
+            1.0,
+            1,
+            1,
+            0,
+            0,
+            0.0,
+            [],
         ),
     )
 
@@ -209,7 +233,19 @@ def test_report_emits_training_and_blindtest_progress(monkeypatch) -> None:
         report_module,
         "run_strategy_v1_on_candles",
         lambda candles, candidate, start_capital_reference=100.0: StrategyV1Result(
-            candidate, 100.0, candidate.stake_usdt, 101.0, 1.0, 1.0, 1.0, 1, 1, 0, 0, 0.0, []
+            candidate,
+            100.0,
+            candidate.stake_quote_amount,
+            101.0,
+            1.0,
+            1.0,
+            1.0,
+            1,
+            1,
+            0,
+            0,
+            0.0,
+            [],
         ),
     )
 

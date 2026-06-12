@@ -107,7 +107,7 @@ def _strategy_v1_report(run_id: str) -> StrategyV1TrainingBlindtestReport:
         symbol="ETHUSDC",
         quote_asset="USDC",
         start_capital_reference=100.0,
-        stake_usdt=100.0,
+        stake_quote_amount=100.0,
         profile="normal",
         selected_candidate=StrategyV1Candidate(
             "momentum_breakout", "v1_selected", 1, None, 0.001, 0.004, 0.004, 2, 0, 10.0, 100.0
@@ -116,12 +116,12 @@ def _strategy_v1_report(run_id: str) -> StrategyV1TrainingBlindtestReport:
         training_final_capital_reference=140.0,
         training_total_net_pnl=40.0,
         training_total_net_pnl_pct=40.0,
-        training_usdt_per_day=1.0,
+        training_quote_per_day=1.0,
         training_trade_count=4,
         blindtest_final_capital_reference=122.0,
         blindtest_total_net_pnl=22.0,
         blindtest_total_net_pnl_pct=22.0,
-        blindtest_usdt_per_day=0.5,
+        blindtest_quote_per_day=0.5,
         blindtest_trade_count=5,
         blindtest_winning_trades=3,
         blindtest_losing_trades=2,

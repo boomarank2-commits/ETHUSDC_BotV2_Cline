@@ -10,7 +10,7 @@ from src.data.binance_candle_downloader import (
     update_ethusdc_1m_candles,
 )
 from src.data.binance_kline_client import BinanceKline
-from src.data.candle_csv_io import save_candle_dataset_to_csv
+from src.data.candle_csv_io import load_candle_dataset_from_csv, save_candle_dataset_to_csv
 from src.data.candle_dataset import CandleDataset
 from src.data.candle_schema import Candle
 from src.data.data_catalog import load_data_catalog
@@ -80,6 +80,9 @@ def test_progress_callback_is_called_on_paginated_download(
     )
 
     assert len(progress_events) == 2
+    assert progress_events[0]["retry_attempt"] == 0
+    assert progress_events[0]["max_retries"] == downloader_module.MAX_RETRIES
+    assert "message" in progress_events[0]
 
 
 def test_progress_pct_is_between_zero_and_100(
@@ -336,3 +339,76 @@ def test_update_progress_contains_incremental_mode(
     )
 
     assert progress_events[0]["mode"] == "incremental_update"
+
+
+def test_retry_succeeds_after_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_path = tmp_path / "candles.csv"
+    calls = 0
+    progress_events: list[dict] = []
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("Binance request error: timeout")
+        return [_kline(60_000)]
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    dataset = download_ethusdc_1m_candles(
+        60_000,
+        60_001,
+        output_path,
+        progress_callback=progress_events.append,
+    )
+
+    assert calls == 2
+    assert len(dataset.candles) == 1
+    assert any(event["retry_attempt"] == 1 for event in progress_events)
+
+
+def test_retry_failure_keeps_saved_candles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_path = tmp_path / "candles.csv"
+    calls = 0
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [_kline(60_000)]
+        raise RuntimeError("Binance request error: timeout")
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    with pytest.raises(RuntimeError, match="timeout"):
+        download_ethusdc_1m_candles(60_000, 120_000, output_path)
+
+    saved = load_candle_dataset_from_csv(output_path)
+    assert len(saved.candles) == 1
+
+
+def test_resume_partial_download_starts_after_existing_last_candle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    captured_starts: list[int] = []
+    progress_events: list[dict] = []
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        captured_starts.append(kwargs["start_time_ms"])
+        return [_kline(120_000)]
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    dataset = download_ethusdc_1m_candles(
+        60_000,
+        120_000,
+        output_path,
+        progress_callback=progress_events.append,
+    )
+
+    assert captured_starts == [120_000]
+    assert len(dataset.candles) == 2
+    assert progress_events[-1]["mode"] == "resume_partial_download"

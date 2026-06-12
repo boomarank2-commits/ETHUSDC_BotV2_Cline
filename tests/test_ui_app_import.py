@@ -25,7 +25,7 @@ def test_ui_contains_stake_and_profile_settings() -> None:
     source = inspect.getsource(app_module)
 
     assert "100" in source
-    assert "Einsatz pro Trade (USDT):" in source
+    assert "Einsatz pro Trade (USDC):" in source
     assert "Stake Preset" not in source
     assert "stake_preset" not in source
     assert "stake_combo" not in source

@@ -1,6 +1,7 @@
 """Public Binance Spot kline client for ETHUSDC 1m market data only."""
 
 import json
+import socket
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -8,6 +9,12 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from src.common.config import CONFIG
+
+DEFAULT_BINANCE_TIMEOUT_SECONDS = 30
+
+
+class BinanceRequestError(RuntimeError):
+    """Public Binance market-data request failed."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,7 @@ def fetch_binance_klines(
     end_time_ms: int | None = None,
     limit: int = 1000,
     base_url: str = "https://api.binance.com",
+    timeout: int = DEFAULT_BINANCE_TIMEOUT_SECONDS,
 ) -> list[BinanceKline]:
     """Fetch public Binance Spot klines without API keys or trading actions."""
     _validate_kline_request(symbol, interval, start_time_ms, limit)
@@ -68,14 +76,15 @@ def fetch_binance_klines(
         query["endTime"] = end_time_ms
     url = f"{base_url.rstrip('/')}/api/v3/klines?{urlencode(query)}"
     try:
-        with urlopen(url, timeout=30) as response:  # noqa: S310
+        with urlopen(url, timeout=timeout) as response:  # noqa: S310
             raw_payload = response.read().decode("utf-8")
     except HTTPError as error:
         msg = f"Binance HTTP error: {error.code}"
-        raise RuntimeError(msg) from error
-    except URLError as error:
-        msg = f"Binance request error: {error.reason}"
-        raise RuntimeError(msg) from error
+        raise BinanceRequestError(msg) from error
+    except (URLError, OSError, TimeoutError, socket.timeout) as error:
+        reason = error.reason if hasattr(error, "reason") else error
+        msg = f"Binance request error: {reason}"
+        raise BinanceRequestError(msg) from error
 
     raw_klines = json.loads(raw_payload)
     return [_parse_binance_kline(raw_kline) for raw_kline in raw_klines]

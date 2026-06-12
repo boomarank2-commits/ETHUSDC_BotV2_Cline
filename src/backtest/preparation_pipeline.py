@@ -89,7 +89,7 @@ def _emit_progress(
 
 def run_backtest_preparation_pipeline(
     time_budget_minutes: int | None = None,
-    stake_usdt: float = 100.0,
+    stake_quote_amount: float = 100.0,
     profile: str = "normal",
     progress_callback: Callable[[dict], None] | None = None,
 ) -> PreparationPipelineResult:
@@ -183,7 +183,7 @@ def run_backtest_preparation_pipeline(
         strategy_v1_report = build_strategy_v1_training_blindtest_report(
             run_id,
             split,
-            stake_usdt=stake_usdt,
+            stake_quote_amount=stake_quote_amount,
             profile=profile,
             progress_callback=progress_callback,
         )

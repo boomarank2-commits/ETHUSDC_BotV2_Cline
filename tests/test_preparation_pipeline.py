@@ -108,9 +108,9 @@ def test_pipeline_forwards_stake_and_profile_to_strategy_v1(
         pipeline_module, "build_strategy_v1_training_blindtest_report", capturing_build
     )
 
-    run_backtest_preparation_pipeline(stake_usdt=1000.0, profile="conservative")
+    run_backtest_preparation_pipeline(stake_quote_amount=1000.0, profile="conservative")
 
-    assert captured["stake_usdt"] == 1000.0
+    assert captured["stake_quote_amount"] == 1000.0
     assert captured["profile"] == "conservative"
 
 

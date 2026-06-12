@@ -20,7 +20,7 @@ class StrategyV1Candidate:
     max_hold_candles: int
     cooldown_candles: int
     fee_bps: float
-    stake_usdt: float
+    stake_quote_amount: float
 
     def __post_init__(self) -> None:
         if not self.family or not self.name:
@@ -33,7 +33,7 @@ class StrategyV1Candidate:
             self.stop_loss_pct,
             self.max_hold_candles,
             self.fee_bps,
-            self.stake_usdt,
+            self.stake_quote_amount,
         ]
         if self.secondary_lookback_candles is not None:
             values.append(self.secondary_lookback_candles)
@@ -50,7 +50,7 @@ class StrategyV1Trade:
     exit_time: str
     entry_price: float
     exit_price: float
-    stake_usdt: float
+    stake_quote_amount: float
     quantity: float
     gross_pnl: float
     fees_paid: float
@@ -67,11 +67,11 @@ class StrategyV1Result:
 
     candidate: StrategyV1Candidate
     start_capital_reference: float
-    stake_usdt: float
+    stake_quote_amount: float
     final_capital_reference: float
     total_net_pnl: float
     total_net_pnl_pct: float
-    usdt_per_day: float
+    quote_per_day: float
     trade_count: int
     winning_trades: int
     losing_trades: int
@@ -102,7 +102,7 @@ def default_strategy_v1_candidates() -> list[StrategyV1Candidate]:
                         max_hold_candles=max_hold,
                         cooldown_candles=max(1, lookback // 10),
                         fee_bps=10.0,
-                        stake_usdt=100.0,
+                        stake_quote_amount=100.0,
                     )
                 )
     return candidates
@@ -171,7 +171,7 @@ def run_strategy_v1_on_candles(
             continue
 
         entry = candles[index]
-        quantity = candidate.stake_usdt / entry.close
+        quantity = candidate.stake_quote_amount / entry.close
         max_exit_index = min(index + candidate.max_hold_candles, len(candles) - 1)
         exit_index = max_exit_index
         exit_reason = "max_hold"
@@ -184,7 +184,9 @@ def run_strategy_v1_on_candles(
 
         exit_candle = candles[exit_index]
         gross_pnl = quantity * (exit_candle.close - entry.close)
-        fees_paid = candidate.stake_usdt * fee_rate + quantity * exit_candle.close * fee_rate
+        fees_paid = (
+            candidate.stake_quote_amount * fee_rate + quantity * exit_candle.close * fee_rate
+        )
         net_pnl = gross_pnl - fees_paid
         cumulative_pnl += net_pnl
         equity = start_capital_reference + cumulative_pnl
@@ -197,12 +199,12 @@ def run_strategy_v1_on_candles(
                 exit_time=exit_candle.open_time,
                 entry_price=entry.close,
                 exit_price=exit_candle.close,
-                stake_usdt=candidate.stake_usdt,
+                stake_quote_amount=candidate.stake_quote_amount,
                 quantity=quantity,
                 gross_pnl=gross_pnl,
                 fees_paid=fees_paid,
                 net_pnl=net_pnl,
-                net_pnl_pct=net_pnl / candidate.stake_usdt * 100,
+                net_pnl_pct=net_pnl / candidate.stake_quote_amount * 100,
                 exit_reason=exit_reason,
                 family=candidate.family,
                 candidate_name=candidate.name,
@@ -215,11 +217,11 @@ def run_strategy_v1_on_candles(
     return StrategyV1Result(
         candidate=candidate,
         start_capital_reference=start_capital_reference,
-        stake_usdt=candidate.stake_usdt,
+        stake_quote_amount=candidate.stake_quote_amount,
         final_capital_reference=final_reference,
         total_net_pnl=cumulative_pnl,
         total_net_pnl_pct=cumulative_pnl / start_capital_reference * 100,
-        usdt_per_day=cumulative_pnl / days,
+        quote_per_day=cumulative_pnl / days,
         trade_count=len(trades),
         winning_trades=sum(1 for trade in trades if trade.net_pnl > 0),
         losing_trades=sum(1 for trade in trades if trade.net_pnl < 0),
@@ -231,9 +233,9 @@ def run_strategy_v1_on_candles(
 
 def _training_score(result: StrategyV1Result, all_zero_trades: bool) -> tuple[float, float, int]:
     if result.trade_count == 0 and not all_zero_trades:
-        return (-1_000_000_000.0, result.usdt_per_day, 0)
+        return (-1_000_000_000.0, result.quote_per_day, 0)
     trade_penalty = 0.0 if result.trade_count >= 3 else (3 - result.trade_count) * 0.01
-    return (result.total_net_pnl - trade_penalty, result.usdt_per_day, result.trade_count)
+    return (result.total_net_pnl - trade_penalty, result.quote_per_day, result.trade_count)
 
 
 def select_best_strategy_v1(

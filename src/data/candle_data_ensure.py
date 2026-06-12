@@ -21,8 +21,8 @@ from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 DOWNLOAD_BUFFER_DAYS = 2
 CURRENT_GRACE_MINUTES = 2
 NETWORK_ERROR_MESSAGE = (
-    "Binance konnte nicht erreicht werden. Internet/Firewall/Binance-Verbindung prüfen "
-    "und später erneut versuchen."
+    "Binance konnte nicht erreicht werden. Bereits geladene Daten wurden behalten. "
+    "Bitte später erneut starten; der Download wird dann fortgesetzt, wenn möglich."
 )
 
 
@@ -231,8 +231,8 @@ def ensure_ethusdc_1m_data_ready(
         if existing_count < REQUIRED_CANDLE_COUNT:
             _emit_progress(
                 progress_callback,
-                "rebuild_incomplete_csv",
-                "Unvollständige CSV erkannt; vollständiger Neuaufbau startet",
+                "resume_partial_download",
+                "Unvollständige CSV erkannt; Download wird fortgesetzt",
                 1.0,
                 candle_count=existing_count,
                 required_candles=REQUIRED_CANDLE_COUNT,
@@ -246,9 +246,9 @@ def ensure_ethusdc_1m_data_ready(
             )
             return _final_result(
                 target_path,
-                "Unvollständige ETHUSDC 1m CSV erkannt und vollständig neu aufgebaut.",
+                "Unvollständige ETHUSDC 1m CSV erkannt; Download wurde fortgesetzt.",
                 was_updated=True,
-                full_download=True,
+                full_download=False,
                 incremental_update=False,
                 already_current=False,
             )

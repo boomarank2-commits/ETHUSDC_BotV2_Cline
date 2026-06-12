@@ -16,6 +16,8 @@ from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 DEFAULT_BINANCE_CANDLE_PATH = DATA_DIR / "candles" / "ETHUSDC_1m.csv"
 ONE_MINUTE_MS = 60_000
 MAX_EMPTY_PAGES = 1
+MAX_RETRIES = 3
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 def binance_kline_to_candle(kline: BinanceKline) -> Candle:
@@ -47,12 +49,29 @@ def _save_dataset_and_catalog(dataset: CandleDataset, target_path: Path) -> None
     save_data_catalog([CandleDataCatalogEntry(CONFIG.symbol, "1m", str(target_path))])
 
 
+def _dataset_by_open_time(dataset: CandleDataset | None = None) -> dict[str, Candle]:
+    if dataset is None:
+        return {}
+    return {candle.open_time: candle for candle in dataset.candles}
+
+
+def _dataset_from_map(candles_by_open_time: dict[str, Candle]) -> CandleDataset:
+    return CandleDataset(
+        CONFIG.symbol,
+        "1m",
+        [candles_by_open_time[key] for key in sorted(candles_by_open_time)],
+    )
+
+
 def _emit_progress(
     progress_callback: Callable[[dict], None] | None,
     loaded_candles: int,
     expected_candles: int,
     last_kline: BinanceKline,
     mode: str,
+    retry_attempt: int = 0,
+    max_retries: int = MAX_RETRIES,
+    message: str | None = None,
 ) -> None:
     if progress_callback is None:
         return
@@ -60,13 +79,70 @@ def _emit_progress(
         {
             "symbol": CONFIG.symbol,
             "interval": "1m",
+            "phase": "data_download",
+            "mode": mode,
+            "retry_attempt": retry_attempt,
+            "max_retries": max_retries,
             "loaded_candles": loaded_candles,
             "expected_candles": expected_candles,
             "progress_pct": min(100.0, loaded_candles / expected_candles * 100),
             "last_open_time": binance_kline_to_candle(last_kline).open_time,
-            "mode": mode,
+            "message": message or f"ETHUSDC 1m {mode}: {loaded_candles}/{expected_candles}",
         }
     )
+
+
+def _emit_retry_progress(
+    progress_callback: Callable[[dict], None] | None,
+    retry_attempt: int,
+    start_time_ms: int,
+    mode: str,
+    error: Exception,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "symbol": CONFIG.symbol,
+            "interval": "1m",
+            "phase": "data_download",
+            "mode": mode,
+            "retry_attempt": retry_attempt,
+            "max_retries": MAX_RETRIES,
+            "loaded_candles": 0,
+            "expected_candles": 0,
+            "progress_pct": None,
+            "last_open_time": None,
+            "message": f"Binance Timeout/Fehler, Retry {retry_attempt}/{MAX_RETRIES}: {error}",
+            "start_time_ms": start_time_ms,
+        }
+    )
+
+
+def _fetch_page_with_retries(
+    start_time_ms: int,
+    end_time_ms: int,
+    progress_callback: Callable[[dict], None] | None,
+    mode: str,
+) -> list[BinanceKline]:
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return fetch_binance_klines(
+                symbol=CONFIG.symbol,
+                interval="1m",
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+                limit=1000,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+            _emit_retry_progress(progress_callback, attempt, start_time_ms, mode, error)
+    if last_error is None:
+        msg = "Binance request failed without error detail"
+        raise RuntimeError(msg)
+    raise last_error
 
 
 def _fetch_klines_range(
@@ -82,13 +158,7 @@ def _fetch_klines_range(
     empty_pages = 0
 
     while current_start <= end_time_ms:
-        page = fetch_binance_klines(
-            symbol=CONFIG.symbol,
-            interval="1m",
-            start_time_ms=current_start,
-            end_time_ms=end_time_ms,
-            limit=1000,
-        )
+        page = _fetch_page_with_retries(current_start, end_time_ms, progress_callback, mode)
         if not page:
             empty_pages += 1
             if empty_pages >= MAX_EMPTY_PAGES:
@@ -112,6 +182,63 @@ def _fetch_klines_range(
     return klines
 
 
+def _load_existing_dataset(target_path: Path) -> CandleDataset | None:
+    if not target_path.exists():
+        return None
+    return load_candle_dataset_from_csv(target_path)
+
+
+def _download_range_to_dataset(
+    start_time_ms: int,
+    end_time_ms: int,
+    target_path: Path,
+    progress_callback: Callable[[dict], None] | None,
+    mode: str,
+    existing_dataset: CandleDataset | None = None,
+) -> CandleDataset:
+    candles_by_open_time = _dataset_by_open_time(existing_dataset)
+    current_start = start_time_ms
+    if existing_dataset is not None and existing_dataset.candles:
+        current_start = max(
+            current_start, _open_time_to_ms(existing_dataset.candles[-1].open_time) + ONE_MINUTE_MS
+        )
+    expected_candles = max(1, ((end_time_ms - start_time_ms) // ONE_MINUTE_MS) + 1)
+    previous_next_start: int | None = None
+    empty_pages = 0
+
+    while current_start <= end_time_ms:
+        page = _fetch_page_with_retries(current_start, end_time_ms, progress_callback, mode)
+        if not page:
+            empty_pages += 1
+            if empty_pages >= MAX_EMPTY_PAGES:
+                break
+            current_start += ONE_MINUTE_MS
+            continue
+        empty_pages = 0
+        new_klines = [kline for kline in page if kline.open_time_ms >= current_start]
+        if not new_klines:
+            msg = "Binance pagination did not return new klines"
+            raise RuntimeError(msg)
+        for candle in [binance_kline_to_candle(kline) for kline in new_klines]:
+            candles_by_open_time[candle.open_time] = candle
+        dataset = _dataset_from_map(candles_by_open_time)
+        _save_dataset_and_catalog(dataset, target_path)
+        _emit_progress(
+            progress_callback,
+            len(dataset.candles),
+            expected_candles,
+            new_klines[-1],
+            mode,
+        )
+        next_start = new_klines[-1].open_time_ms + ONE_MINUTE_MS
+        if previous_next_start is not None and next_start <= previous_next_start:
+            msg = "Binance pagination did not advance"
+            raise RuntimeError(msg)
+        previous_next_start = next_start
+        current_start = next_start
+    return _dataset_from_map(candles_by_open_time)
+
+
 def download_ethusdc_1m_candles(
     start_time_ms: int,
     end_time_ms: int,
@@ -127,9 +254,20 @@ def download_ethusdc_1m_candles(
         raise ValueError(msg)
 
     target_path = output_path or DEFAULT_BINANCE_CANDLE_PATH
-    klines = _fetch_klines_range(start_time_ms, end_time_ms, progress_callback, "full_download")
-    candles = [binance_kline_to_candle(kline) for kline in klines]
-    dataset = CandleDataset(symbol=CONFIG.symbol, interval="1m", candles=candles)
+    existing_dataset = _load_existing_dataset(target_path)
+    mode = (
+        "resume_partial_download"
+        if existing_dataset and existing_dataset.candles
+        else "full_download"
+    )
+    dataset = _download_range_to_dataset(
+        start_time_ms,
+        end_time_ms,
+        target_path,
+        progress_callback,
+        mode,
+        existing_dataset,
+    )
     _save_dataset_and_catalog(dataset, target_path)
     return dataset
 
@@ -162,16 +300,13 @@ def update_ethusdc_1m_candles(
         _save_dataset_and_catalog(existing_dataset, target_path)
         return existing_dataset
 
-    new_klines = _fetch_klines_range(
+    updated_dataset = _download_range_to_dataset(
         next_missing_time_ms,
         now_ms,
+        target_path,
         progress_callback,
         "incremental_update",
+        existing_dataset,
     )
-    combined_by_open_time = {candle.open_time: candle for candle in existing_dataset.candles}
-    for candle in [binance_kline_to_candle(kline) for kline in new_klines]:
-        combined_by_open_time[candle.open_time] = candle
-    combined_candles = [combined_by_open_time[key] for key in sorted(combined_by_open_time)]
-    updated_dataset = CandleDataset(CONFIG.symbol, "1m", combined_candles)
     _save_dataset_and_catalog(updated_dataset, target_path)
     return updated_dataset

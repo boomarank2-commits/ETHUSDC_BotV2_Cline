@@ -575,7 +575,7 @@ Created/changed:
 - Strategy V1 report/pipeline/summary tests
 
 Purpose:
-- Compare multiple LONG-only Strategy V1 families on training, freeze best candidate, blindtest with fixed 100 USDT stake, and prefer V1 in summary.
+- Compare multiple LONG-only Strategy V1 families on training, freeze best candidate, blindtest with fixed 100 USDC stake, and prefer V1 in summary.
 
 ## 2026-06-12 - Backtest data ensure flow added
 
@@ -592,7 +592,7 @@ Purpose:
 
 Changed:
 - Backtest is now the central UI action; data check/update runs automatically.
-- Free positive Stake USDT input added next to presets.
+- Free positive Stake USDC input added next to presets.
 - UI progress callbacks show data check, download/update, pipeline, training, blindtest and completion/failure phases.
 - Binance/network timeout errors are mapped to a clear user message.
 
@@ -603,8 +603,19 @@ Purpose:
 
 Changed:
 - Removed preset stake dropdown from normal UI workflow.
-- UI now has one field: Einsatz pro Trade (USDT), default 100.
+- UI now has one field: Einsatz pro Trade (USDC), default 100.
 - Any positive numeric stake is accepted and passed to Strategy V1.
 
 Purpose:
 - Reduce UI confusion while keeping automatic data ensure before backtest start.
+
+## 2026-06-12 - USDC truth and Binance resume hardened
+
+Changed:
+- User-facing stake text now uses USDC only.
+- Strategy V1 stake fields now use generic quote naming.
+- Binance kline client has explicit request timeout/error handling.
+- Candle downloader now retries failed pages and saves pages for resume.
+
+Purpose:
+- Keep ETHUSDC / USDC truth consistent and avoid losing partial downloads after timeout.

@@ -19,19 +19,19 @@ BINANCE_UNREACHABLE_MESSAGE = (
 class BacktestUiSettings:
     """Validated UI settings for one backtest run."""
 
-    stake_usdt: float = 100.0
+    stake_quote_amount: float = 100.0
     profile: str = "normal"
 
     def __post_init__(self) -> None:
         try:
-            stake_usdt = float(self.stake_usdt)
+            stake_quote_amount = float(self.stake_quote_amount)
         except (TypeError, ValueError) as error:
-            msg = "stake_usdt must be numeric"
+            msg = "stake_quote_amount must be numeric"
             raise ValueError(msg) from error
-        if stake_usdt <= 0:
-            msg = "stake_usdt must be positive"
+        if stake_quote_amount <= 0:
+            msg = "stake_quote_amount must be positive"
             raise ValueError(msg)
-        object.__setattr__(self, "stake_usdt", stake_usdt)
+        object.__setattr__(self, "stake_quote_amount", stake_quote_amount)
         if self.profile not in ALLOWED_PROFILES:
             msg = "profile must be conservative, normal or aggressive"
             raise ValueError(msg)
@@ -60,7 +60,7 @@ class BacktestUiResult:
     blindtest_end: str | None
     report_path: str | None
     report_folder: str | None
-    usdt_per_day: float | None = None
+    quote_per_day: float | None = None
     selected_family: str | None = None
     selected_candidate_name: str | None = None
 
@@ -86,7 +86,7 @@ def _result_from_summary(summary: BacktestSummary, report_path: str) -> Backtest
         blindtest_end=summary.blindtest_end,
         report_path=report_path,
         report_folder=str(Path(report_path).parent),
-        usdt_per_day=summary.usdt_per_day,
+        quote_per_day=summary.quote_per_day,
         selected_family=summary.selected_family,
         selected_candidate_name=summary.selected_candidate_name,
     )
@@ -153,7 +153,7 @@ def run_backtest_for_ui(
                 candle_count=ensure_result.candle_count,
             )
         pipeline_result = run_backtest_preparation_pipeline(
-            stake_usdt=selected_settings.stake_usdt,
+            stake_quote_amount=selected_settings.stake_quote_amount,
             profile=selected_settings.profile,
             progress_callback=progress_callback,
         )
@@ -161,7 +161,7 @@ def run_backtest_for_ui(
             summary = load_backtest_summary(pipeline_result.run_id)
             result = _result_from_summary(summary, pipeline_result.backtest_summary_path)
             message = (
-                f"{result.message} | Stake: {selected_settings.stake_usdt:.0f} USDT | "
+                f"{result.message} | Stake: {selected_settings.stake_quote_amount:.0f} USDC | "
                 f"Profil: {selected_settings.profile}"
             )
             return BacktestUiResult(
