@@ -468,3 +468,12 @@ Created:
 
 Purpose:
 - Build/save/load a compact UI-readable summary from data, split and Buy-and-Hold reports.
+
+## 2026-06-12 - Pipeline summary output added
+
+Changed:
+- src/backtest/preparation_pipeline.py
+- tests/test_preparation_pipeline.py
+
+Purpose:
+- Pipeline now saves backtest_summary.json for successful runs and data-preparation failures when possible.

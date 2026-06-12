@@ -19,6 +19,7 @@ from src.data.train_blind_split_report import (
     build_train_blind_split_report,
     save_train_blind_split_report,
 )
+from src.reports.backtest_summary import build_backtest_summary, save_backtest_summary
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class PreparationPipelineResult:
     data_preparation_report_path: str
     train_blind_split_report_path: str
     buy_hold_benchmark_report_path: str | None
+    backtest_summary_path: str | None
     progress_path: str
     error: str | None
 
@@ -63,6 +65,7 @@ def run_backtest_preparation_pipeline(
     data_report_path = ""
     split_report_path = ""
     benchmark_report_path: str | None = None
+    summary_path: str | None = None
     progress_path = ""
     try:
         request = initialize_backtest_run(time_budget_minutes=time_budget_minutes)
@@ -75,10 +78,11 @@ def run_backtest_preparation_pipeline(
         data_report_path = str(save_data_preparation_report(data_report))
         if not data_report.usable_for_backtest:
             error = data_report.reason or "data is not usable for backtest preparation"
+            summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
             mark_backtest_run_failed(run_id, error)
             progress_path = _save_progress(run_id, "failed", "data_preparation", 100.0, error=error)
             return PreparationPipelineResult(
-                run_id, "failed", data_report_path, "", None, progress_path, error
+                run_id, "failed", data_report_path, "", None, summary_path, progress_path, error
             )
 
         progress_path = _save_progress(run_id, "running", "train_blind_split", 75.0)
@@ -87,6 +91,7 @@ def run_backtest_preparation_pipeline(
         split_report_path = str(save_train_blind_split_report(split_report))
         benchmark_report = build_buy_hold_benchmark_report(run_id, split)
         benchmark_report_path = str(save_buy_hold_benchmark_report(benchmark_report))
+        summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
         progress_path = _save_progress(run_id, "completed", "completed", 100.0)
         mark_backtest_run_completed(run_id)
         return PreparationPipelineResult(
@@ -95,6 +100,7 @@ def run_backtest_preparation_pipeline(
             data_report_path,
             split_report_path,
             benchmark_report_path,
+            summary_path,
             progress_path,
             None,
         )
@@ -108,12 +114,17 @@ def run_backtest_preparation_pipeline(
                 )
             except Exception:  # noqa: BLE001
                 pass
+            try:
+                summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
+            except Exception:  # noqa: BLE001
+                summary_path = None
         return PreparationPipelineResult(
             run_id,
             "failed",
             data_report_path,
             split_report_path,
             benchmark_report_path,
+            summary_path,
             progress_path,
             error_message,
         )

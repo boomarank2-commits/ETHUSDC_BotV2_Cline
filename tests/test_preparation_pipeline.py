@@ -16,6 +16,7 @@ from src.data.candle_dataset import CandleDataset
 from src.data.candle_schema import Candle
 from src.data.data_catalog import CandleDataCatalogEntry, get_catalog_path, save_data_catalog
 from src.data.data_preparation_report import DataPreparationReport
+from src.reports.backtest_summary import load_backtest_summary
 
 
 def _candle(index: int) -> Candle:
@@ -91,6 +92,33 @@ def test_loaded_buy_hold_benchmark_has_one_trade(fast_success_pipeline: None) ->
     assert report.trade_count == 1
 
 
+def test_successful_pipeline_creates_backtest_summary(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert result.backtest_summary_path is not None
+    assert Path(result.backtest_summary_path).is_file()
+
+
+def test_result_contains_backtest_summary_path(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert result.backtest_summary_path is not None
+
+
+def test_loaded_summary_has_completed_status(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert load_backtest_summary(result.run_id).status == "completed"
+
+
+def test_loaded_summary_contains_benchmark_result(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+    summary = load_backtest_summary(result.run_id)
+
+    assert summary.final_capital is not None
+    assert summary.total_pnl is not None
+
+
 def test_successful_pipeline_sets_completed_status(fast_success_pipeline: None) -> None:
     result = run_backtest_preparation_pipeline()
 
@@ -128,6 +156,22 @@ def test_not_enough_dataset_fails_and_saves_data_report(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert Path(result.data_preparation_report_path).is_file()
     assert result.buy_hold_benchmark_report_path is None
+    assert result.backtest_summary_path is not None
+    assert load_backtest_summary(result.run_id).status == "failed"
+
+
+def test_hard_error_without_reports_has_no_summary_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_before_run_created(time_budget_minutes: int | None = None) -> None:
+        raise RuntimeError("hard initialization failure")
+
+    monkeypatch.setattr(pipeline_module, "initialize_backtest_run", fail_before_run_created)
+
+    result = run_backtest_preparation_pipeline()
+
+    assert result.status == "failed"
+    assert result.backtest_summary_path is None
 
 
 def test_pipeline_result_has_no_trade_pnl_or_signal_fields() -> None:
