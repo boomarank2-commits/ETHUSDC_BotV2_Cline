@@ -564,3 +564,15 @@ Changed:
 
 Purpose:
 - Existing local ETHUSDC 1m CSVs are now updated incrementally; full download only happens when local data is missing.
+
+## 2026-06-12 - Strategy V1 fixed-stake backtest added
+
+Created/changed:
+- src/backtest/strategy_v1.py
+- src/backtest/strategy_v1_report.py
+- src/backtest/preparation_pipeline.py
+- src/reports/backtest_summary.py
+- Strategy V1 report/pipeline/summary tests
+
+Purpose:
+- Compare multiple LONG-only Strategy V1 families on training, freeze best candidate, blindtest with fixed 100 USDT stake, and prefer V1 in summary.

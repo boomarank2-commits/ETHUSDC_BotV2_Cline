@@ -13,6 +13,10 @@ from src.backtest.strategy_v0_report import (
     build_strategy_v0_training_blindtest_report,
     save_strategy_v0_report,
 )
+from src.backtest.strategy_v1_report import (
+    build_strategy_v1_training_blindtest_report,
+    save_strategy_v1_report,
+)
 from src.data.data_preparation_report import (
     build_data_preparation_report,
     save_data_preparation_report,
@@ -36,6 +40,7 @@ class PreparationPipelineResult:
     train_blind_split_report_path: str
     buy_hold_benchmark_report_path: str | None
     strategy_v0_report_path: str | None
+    strategy_v1_report_path: str | None
     backtest_summary_path: str | None
     progress_path: str
     error: str | None
@@ -71,6 +76,7 @@ def run_backtest_preparation_pipeline(
     split_report_path = ""
     benchmark_report_path: str | None = None
     strategy_v0_report_path: str | None = None
+    strategy_v1_report_path: str | None = None
     summary_path: str | None = None
     progress_path = ""
     try:
@@ -94,6 +100,7 @@ def run_backtest_preparation_pipeline(
                 "",
                 None,
                 None,
+                None,
                 summary_path,
                 progress_path,
                 error,
@@ -107,6 +114,8 @@ def run_backtest_preparation_pipeline(
         benchmark_report_path = str(save_buy_hold_benchmark_report(benchmark_report))
         strategy_v0_report = build_strategy_v0_training_blindtest_report(run_id, split)
         strategy_v0_report_path = str(save_strategy_v0_report(strategy_v0_report))
+        strategy_v1_report = build_strategy_v1_training_blindtest_report(run_id, split)
+        strategy_v1_report_path = str(save_strategy_v1_report(strategy_v1_report))
         summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
         progress_path = _save_progress(run_id, "completed", "completed", 100.0)
         mark_backtest_run_completed(run_id)
@@ -117,6 +126,7 @@ def run_backtest_preparation_pipeline(
             split_report_path,
             benchmark_report_path,
             strategy_v0_report_path,
+            strategy_v1_report_path,
             summary_path,
             progress_path,
             None,
@@ -142,6 +152,7 @@ def run_backtest_preparation_pipeline(
             split_report_path,
             benchmark_report_path,
             strategy_v0_report_path,
+            strategy_v1_report_path,
             summary_path,
             progress_path,
             error_message,

@@ -8,6 +8,11 @@ from src.backtest.strategy_v0_report import (
     StrategyV0TrainingBlindtestReport,
     save_strategy_v0_report,
 )
+from src.backtest.strategy_v1 import StrategyV1Candidate
+from src.backtest.strategy_v1_report import (
+    StrategyV1TrainingBlindtestReport,
+    save_strategy_v1_report,
+)
 from src.data.data_preparation_report import DataPreparationReport, save_data_preparation_report
 from src.data.train_blind_split_report import TrainBlindSplitReport, save_train_blind_split_report
 from src.reports.backtest_summary import (
@@ -96,6 +101,41 @@ def _strategy_report(run_id: str) -> StrategyV0TrainingBlindtestReport:
     )
 
 
+def _strategy_v1_report(run_id: str) -> StrategyV1TrainingBlindtestReport:
+    return StrategyV1TrainingBlindtestReport(
+        run_id=run_id,
+        symbol="ETHUSDC",
+        quote_asset="USDC",
+        start_capital_reference=100.0,
+        stake_usdt=100.0,
+        selected_candidate=StrategyV1Candidate(
+            "momentum_breakout", "v1_selected", 1, None, 0.001, 0.004, 0.004, 2, 0, 10.0, 100.0
+        ),
+        training_family="momentum_breakout",
+        training_final_capital_reference=140.0,
+        training_total_net_pnl=40.0,
+        training_total_net_pnl_pct=40.0,
+        training_usdt_per_day=1.0,
+        training_trade_count=4,
+        blindtest_final_capital_reference=122.0,
+        blindtest_total_net_pnl=22.0,
+        blindtest_total_net_pnl_pct=22.0,
+        blindtest_usdt_per_day=0.5,
+        blindtest_trade_count=5,
+        blindtest_winning_trades=3,
+        blindtest_losing_trades=2,
+        blindtest_neutral_trades=0,
+        blindtest_max_drawdown=3.0,
+        blindtest_start="2026-01-01T00:03:00",
+        blindtest_end="2026-01-01T00:04:00",
+        positive_days=2,
+        negative_days=1,
+        neutral_days=0,
+        best_day_pnl=5.0,
+        worst_day_pnl=-2.0,
+    )
+
+
 def test_completed_summary_is_built_from_reports() -> None:
     run_id = "run_20260612_210001"
     _save_completed_reports(run_id)
@@ -128,6 +168,22 @@ def test_summary_prefers_strategy_v0_over_buy_hold() -> None:
     assert summary.total_pnl == 11.0
     assert summary.trade_count == 3
     assert summary.message == "Strategy V0 training+blindtest completed"
+
+
+def test_summary_prefers_strategy_v1_over_v0_and_buy_hold() -> None:
+    run_id = "run_20260612_210008"
+    _save_completed_reports(run_id)
+    save_strategy_v0_report(_strategy_report(run_id))
+    save_strategy_v1_report(_strategy_v1_report(run_id))
+
+    summary = build_backtest_summary(run_id)
+
+    assert summary.final_capital == 122.0
+    assert summary.total_pnl == 22.0
+    assert summary.trade_count == 5
+    assert summary.message == "Strategy V1 training+blindtest completed"
+    assert summary.selected_family == "momentum_breakout"
+    assert summary.best_day_pnl == 5.0
 
 
 def test_windows_come_from_train_blind_split_report() -> None:

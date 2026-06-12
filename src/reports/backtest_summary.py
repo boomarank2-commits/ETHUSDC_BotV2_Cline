@@ -7,6 +7,7 @@ from typing import Any
 
 from src.backtest.buy_hold_benchmark import load_buy_hold_benchmark_report
 from src.backtest.strategy_v0_report import load_strategy_v0_report
+from src.backtest.strategy_v1_report import load_strategy_v1_report
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
 from src.data.data_preparation_report import load_data_preparation_report
 from src.data.train_blind_split_report import load_train_blind_split_report
@@ -35,6 +36,13 @@ class BacktestSummary:
     detected_gaps: int | None
     usable_for_backtest: bool
     message: str
+    usdt_per_day: float | None = None
+    selected_family: str | None = None
+    selected_candidate_name: str | None = None
+    positive_days: int | None = None
+    negative_days: int | None = None
+    best_day_pnl: float | None = None
+    worst_day_pnl: float | None = None
 
     def __post_init__(self) -> None:
         get_run_report_dir(self.run_id)
@@ -70,6 +78,37 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
         )
 
     split_report = load_train_blind_split_report(run_id)
+    try:
+        strategy_v1_report = load_strategy_v1_report(run_id)
+        return BacktestSummary(
+            run_id=run_id,
+            status="completed",
+            symbol=strategy_v1_report.symbol,
+            quote_asset=strategy_v1_report.quote_asset,
+            start_capital=strategy_v1_report.start_capital_reference,
+            final_capital=strategy_v1_report.blindtest_final_capital_reference,
+            total_pnl=strategy_v1_report.blindtest_total_net_pnl,
+            total_pnl_pct=strategy_v1_report.blindtest_total_net_pnl_pct,
+            trade_count=strategy_v1_report.blindtest_trade_count,
+            training_start=split_report.training_start,
+            training_end=split_report.training_end,
+            blindtest_start=split_report.blindtest_start,
+            blindtest_end=split_report.blindtest_end,
+            candle_count=data_report.candle_count,
+            detected_gaps=data_report.detected_gaps,
+            usable_for_backtest=True,
+            message="Strategy V1 training+blindtest completed",
+            usdt_per_day=strategy_v1_report.blindtest_usdt_per_day,
+            selected_family=strategy_v1_report.selected_candidate.family,
+            selected_candidate_name=strategy_v1_report.selected_candidate.name,
+            positive_days=strategy_v1_report.positive_days,
+            negative_days=strategy_v1_report.negative_days,
+            best_day_pnl=strategy_v1_report.best_day_pnl,
+            worst_day_pnl=strategy_v1_report.worst_day_pnl,
+        )
+    except FileNotFoundError:
+        pass
+
     try:
         strategy_report = load_strategy_v0_report(run_id)
         return BacktestSummary(

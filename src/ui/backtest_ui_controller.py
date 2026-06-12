@@ -30,6 +30,9 @@ class BacktestUiResult:
     blindtest_end: str | None
     report_path: str | None
     report_folder: str | None
+    usdt_per_day: float | None = None
+    selected_family: str | None = None
+    selected_candidate_name: str | None = None
 
 
 def _result_from_summary(summary: BacktestSummary, report_path: str) -> BacktestUiResult:
@@ -53,6 +56,9 @@ def _result_from_summary(summary: BacktestSummary, report_path: str) -> Backtest
         blindtest_end=summary.blindtest_end,
         report_path=report_path,
         report_folder=str(Path(report_path).parent),
+        usdt_per_day=summary.usdt_per_day,
+        selected_family=summary.selected_family,
+        selected_candidate_name=summary.selected_candidate_name,
     )
 
 

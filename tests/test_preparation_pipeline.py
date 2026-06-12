@@ -85,6 +85,13 @@ def test_successful_pipeline_creates_strategy_v0_report(fast_success_pipeline: N
     assert Path(result.strategy_v0_report_path).is_file()
 
 
+def test_successful_pipeline_creates_strategy_v1_report(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert result.strategy_v1_report_path is not None
+    assert Path(result.strategy_v1_report_path).is_file()
+
+
 def test_result_contains_buy_hold_benchmark_report_path(fast_success_pipeline: None) -> None:
     result = run_backtest_preparation_pipeline()
 
@@ -164,6 +171,7 @@ def test_not_enough_dataset_fails_and_saves_data_report(tmp_path: Path) -> None:
     assert Path(result.data_preparation_report_path).is_file()
     assert result.buy_hold_benchmark_report_path is None
     assert result.strategy_v0_report_path is None
+    assert result.strategy_v1_report_path is None
     assert result.backtest_summary_path is not None
     assert load_backtest_summary(result.run_id).status == "failed"
 
