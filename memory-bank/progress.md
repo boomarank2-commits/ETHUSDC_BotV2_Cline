@@ -185,3 +185,27 @@ Tests:
 - python -m pytest: 30 passed in 0.06s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 22 files already formatted.
+
+## 2026-06-12 - Blindtest expectation report IO created
+
+Created:
+- src/reports/blindtest_expectation_io.py
+- tests/test_blindtest_expectation_io.py
+
+Purpose:
+- Save BlindtestExpectationSummary as readable JSON in reports/backtests/<run_id>/blindtest_expectation.json.
+- Load the same JSON back through the schema.
+
+Scope:
+- Technical writer/reader only.
+- No trading code.
+- No backtest calculation.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 36 passed in 0.07s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 24 files already formatted.
