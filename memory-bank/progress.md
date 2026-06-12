@@ -360,3 +360,12 @@ Created:
 
 Purpose:
 - Save and load local ETHUSDC 1m candle datasets as CSV without download or Binance access.
+
+## 2026-06-12 - Candle quality report created
+
+Created:
+- src/data/candle_quality.py
+- tests/test_candle_quality.py
+
+Purpose:
+- Build a technical quality report for local ETHUSDC 1m CandleDataset data.
