@@ -498,3 +498,14 @@ Created:
 
 Purpose:
 - Download public Binance Spot ETHUSDC 1m klines to local CSV and update data_catalog.json.
+
+## 2026-06-12 - UI data download controller added
+
+Created/changed:
+- src/ui/data_download_controller.py
+- src/ui/app.py
+- tests/test_data_download_controller.py
+- tests/test_ui_app_import.py
+
+Purpose:
+- UI can trigger public ETHUSDC 1m data download/update before benchmark backtest.

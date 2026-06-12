@@ -5,6 +5,10 @@ from threading import Thread
 from tkinter import ttk
 
 from src.ui.backtest_ui_controller import BacktestUiResult, run_backtest_for_ui
+from src.ui.data_download_controller import (
+    DataDownloadUiResult,
+    download_required_ethusdc_1m_data_for_ui,
+)
 
 
 def _format_value(value: object) -> str:
@@ -23,6 +27,12 @@ class BacktestApp:
         self.root.title("ETHUSDC Bot V2")
         self.status_var = tk.StringVar(value="Bereit")
         self.result_var = tk.StringVar(value="Noch kein Ergebnis.")
+        self.download_button = ttk.Button(
+            root,
+            text="Daten laden/aktualisieren",
+            command=self._start_download,
+        )
+        self.download_button.pack(padx=12, pady=8, fill="x")
         self.start_button = ttk.Button(
             root,
             text="Backtest starten",
@@ -32,6 +42,32 @@ class BacktestApp:
         ttk.Label(root, textvariable=self.status_var).pack(padx=12, pady=4, anchor="w")
         ttk.Label(root, textvariable=self.result_var, justify="left").pack(
             padx=12, pady=8, anchor="w"
+        )
+
+    def _start_download(self) -> None:
+        self.download_button.configure(state="disabled")
+        self.status_var.set("Daten werden geladen...")
+        Thread(target=self._run_download_worker, daemon=True).start()
+
+    def _run_download_worker(self) -> None:
+        result = download_required_ethusdc_1m_data_for_ui()
+        self.root.after(0, self._show_download_result, result)
+
+    def _show_download_result(self, result: DataDownloadUiResult) -> None:
+        self.download_button.configure(state="normal")
+        self.status_var.set("Daten bereit" if result.success else "Datenfehler")
+        self.result_var.set(
+            "\n".join(
+                [
+                    f"Status: {'success' if result.success else 'failed'}",
+                    f"Symbol: {result.symbol}",
+                    f"Interval: {result.interval}",
+                    f"Candles: {_format_value(result.candle_count)}",
+                    f"CSV: {_format_value(result.output_path)}",
+                    f"Catalog aktualisiert: {result.catalog_updated}",
+                    f"Message: {result.message}",
+                ]
+            )
         )
 
     def _start_backtest(self) -> None:
