@@ -60,6 +60,35 @@ def test_downloader_is_called_with_default_ethusdc_1m_target(
     assert captured["end_time_ms"] > captured["start_time_ms"]
 
 
+def test_progress_callback_is_passed_to_downloader(monkeypatch: pytest.MonkeyPatch) -> None:
+    def callback(progress: dict) -> None:
+        return None
+
+    captured: dict[str, object] = {}
+
+    def fake_download(**kwargs: object) -> CandleDataset:
+        captured.update(kwargs)
+        return _dataset()
+
+    monkeypatch.setattr(controller_module, "download_ethusdc_1m_candles", fake_download)
+
+    download_required_ethusdc_1m_data_for_ui(progress_callback=callback)
+
+    assert captured["progress_callback"] is callback
+
+
+def test_controller_remains_compatible_without_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        controller_module,
+        "download_ethusdc_1m_candles",
+        lambda **kwargs: _dataset(),
+    )
+
+    result = download_required_ethusdc_1m_data_for_ui()
+
+    assert result.success is True
+
+
 def test_downloader_exception_returns_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_download(**kwargs: object) -> None:
         raise RuntimeError("network unavailable")

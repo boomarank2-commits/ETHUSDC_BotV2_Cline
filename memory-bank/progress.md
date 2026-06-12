@@ -509,3 +509,25 @@ Created/changed:
 
 Purpose:
 - UI can trigger public ETHUSDC 1m data download/update before benchmark backtest.
+
+## 2026-06-12 - Download progress added
+
+Changed:
+- src/data/binance_candle_downloader.py
+- src/ui/data_download_controller.py
+- src/ui/app.py
+- tests/test_binance_candle_downloader.py
+- tests/test_data_download_controller.py
+
+Purpose:
+- ETHUSDC 1m download now reports loaded candles, percent progress and latest timestamp to the UI.
+
+## 2026-06-12 - Windows UI launcher added
+
+Created/changed:
+- ETHUSDC_BotV2_UI_starten.bat
+- README.md
+- tests/test_windows_launcher.py
+
+Purpose:
+- Start the Tkinter UI by double-clicking a Windows batch file or via python -m src.ui.app.

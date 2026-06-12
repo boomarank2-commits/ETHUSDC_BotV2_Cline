@@ -44,6 +44,94 @@ def test_downloader_paginates_multiple_pages(
     assert len(dataset.candles) == 3
 
 
+def test_progress_callback_is_called_on_paginated_download(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pages = [[_kline(60_000), _kline(120_000)], [_kline(180_000)]]
+    calls = 0
+    progress_events: list[dict] = []
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        nonlocal calls
+        page = pages[calls] if calls < len(pages) else []
+        calls += 1
+        return page
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    download_ethusdc_1m_candles(
+        60_000,
+        180_000,
+        tmp_path / "candles.csv",
+        progress_callback=progress_events.append,
+    )
+
+    assert len(progress_events) == 2
+
+
+def test_progress_pct_is_between_zero_and_100(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    progress_events: list[dict] = []
+    monkeypatch.setattr(
+        downloader_module,
+        "fetch_binance_klines",
+        lambda *args, **kwargs: [_kline(60_000)],
+    )
+
+    download_ethusdc_1m_candles(
+        60_000,
+        60_001,
+        tmp_path / "candles.csv",
+        progress_callback=progress_events.append,
+    )
+
+    assert 0 <= progress_events[0]["progress_pct"] <= 100
+
+
+def test_loaded_candles_increase_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pages = [[_kline(60_000)], [_kline(120_000)]]
+    calls = 0
+    progress_events: list[dict] = []
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        nonlocal calls
+        page = pages[calls] if calls < len(pages) else []
+        calls += 1
+        return page
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    download_ethusdc_1m_candles(
+        60_000,
+        120_000,
+        tmp_path / "candles.csv",
+        progress_callback=progress_events.append,
+    )
+
+    assert progress_events[1]["loaded_candles"] > progress_events[0]["loaded_candles"]
+
+
+def test_without_progress_callback_behavior_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        downloader_module,
+        "fetch_binance_klines",
+        lambda *args, **kwargs: [_kline(60_000)],
+    )
+
+    dataset = download_ethusdc_1m_candles(60_000, 60_001, tmp_path / "candles.csv")
+
+    assert len(dataset.candles) == 1
+
+
 def test_downloader_stops_on_empty_page(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(downloader_module, "fetch_binance_klines", lambda *args, **kwargs: [])
 

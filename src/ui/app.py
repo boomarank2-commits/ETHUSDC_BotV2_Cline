@@ -46,15 +46,40 @@ class BacktestApp:
 
     def _start_download(self) -> None:
         self.download_button.configure(state="disabled")
+        self.start_button.configure(state="disabled")
         self.status_var.set("Daten werden geladen...")
         Thread(target=self._run_download_worker, daemon=True).start()
 
     def _run_download_worker(self) -> None:
-        result = download_required_ethusdc_1m_data_for_ui()
+        result = download_required_ethusdc_1m_data_for_ui(
+            progress_callback=self._queue_download_progress
+        )
         self.root.after(0, self._show_download_result, result)
+
+    def _queue_download_progress(self, progress: dict) -> None:
+        self.root.after(0, self._show_download_progress, progress)
+
+    def _show_download_progress(self, progress: dict) -> None:
+        loaded = progress.get("loaded_candles")
+        pct = progress.get("progress_pct")
+        last_open_time = progress.get("last_open_time")
+        self.status_var.set(
+            f"Daten werden geladen... {_format_value(loaded)} Candles, {_format_value(pct)}%"
+        )
+        self.result_var.set(
+            "\n".join(
+                [
+                    "Download gestartet",
+                    f"Geladene Candles: {_format_value(loaded)}",
+                    f"Fortschritt: {_format_value(pct)}%",
+                    f"Letzter Timestamp: {_format_value(last_open_time)}",
+                ]
+            )
+        )
 
     def _show_download_result(self, result: DataDownloadUiResult) -> None:
         self.download_button.configure(state="normal")
+        self.start_button.configure(state="normal")
         self.status_var.set("Daten bereit" if result.success else "Datenfehler")
         self.result_var.set(
             "\n".join(

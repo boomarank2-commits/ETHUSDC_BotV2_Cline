@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 from src.common.config import CONFIG
 from src.common.paths import DATA_DIR
@@ -35,6 +36,7 @@ def download_ethusdc_1m_candles(
     start_time_ms: int,
     end_time_ms: int,
     output_path: Path | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> CandleDataset:
     """Download public ETHUSDC 1m klines, save CSV, and update the data catalog."""
     if start_time_ms <= 0:
@@ -47,6 +49,7 @@ def download_ethusdc_1m_candles(
     target_path = output_path or DEFAULT_BINANCE_CANDLE_PATH
     klines: list[BinanceKline] = []
     current_start = start_time_ms
+    expected_candles = max(1, ((end_time_ms - start_time_ms) // ONE_MINUTE_MS) + 1)
     previous_next_start: int | None = None
     empty_pages = 0
 
@@ -71,6 +74,18 @@ def download_ethusdc_1m_candles(
             msg = "Binance pagination did not return new klines"
             raise RuntimeError(msg)
         klines.extend(new_klines)
+        if progress_callback is not None:
+            loaded_candles = len(klines)
+            progress_callback(
+                {
+                    "symbol": CONFIG.symbol,
+                    "interval": "1m",
+                    "loaded_candles": loaded_candles,
+                    "expected_candles": expected_candles,
+                    "progress_pct": min(100.0, loaded_candles / expected_candles * 100),
+                    "last_open_time": binance_kline_to_candle(new_klines[-1]).open_time,
+                }
+            )
         next_start = new_klines[-1].open_time_ms + ONE_MINUTE_MS
         if previous_next_start is not None and next_start <= previous_next_start:
             msg = "Binance pagination did not advance"

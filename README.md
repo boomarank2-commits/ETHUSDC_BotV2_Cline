@@ -15,3 +15,9 @@ Read order for Cline:
 9. docs/IMPLEMENTATION_PLAN.md
 
 Old files are not truth.
+
+## UI starten
+
+- Windows: Doppelklick auf `ETHUSDC_BotV2_UI_starten.bat`
+- Alternative per PowerShell:
+  `python -m src.ui.app`
