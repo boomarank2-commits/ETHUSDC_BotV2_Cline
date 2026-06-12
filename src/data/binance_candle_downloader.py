@@ -7,10 +7,11 @@ from typing import Callable
 from src.common.config import CONFIG
 from src.common.paths import DATA_DIR
 from src.data.binance_kline_client import BinanceKline, fetch_binance_klines
-from src.data.candle_csv_io import save_candle_dataset_to_csv
+from src.data.candle_csv_io import load_candle_dataset_from_csv, save_candle_dataset_to_csv
 from src.data.candle_dataset import CandleDataset
 from src.data.candle_schema import Candle
 from src.data.data_catalog import CandleDataCatalogEntry, save_data_catalog
+from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 
 DEFAULT_BINANCE_CANDLE_PATH = DATA_DIR / "candles" / "ETHUSDC_1m.csv"
 ONE_MINUTE_MS = 60_000
@@ -32,21 +33,48 @@ def binance_kline_to_candle(kline: BinanceKline) -> Candle:
     )
 
 
-def download_ethusdc_1m_candles(
+def _open_time_to_ms(open_time: str) -> int:
+    normalized = open_time.replace("Z", "+00:00")
+    return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+
+
+def _utc_now_ms() -> int:
+    return int(datetime.now(tz=UTC).timestamp() * 1000)
+
+
+def _save_dataset_and_catalog(dataset: CandleDataset, target_path: Path) -> None:
+    save_candle_dataset_to_csv(dataset, target_path)
+    save_data_catalog([CandleDataCatalogEntry(CONFIG.symbol, "1m", str(target_path))])
+
+
+def _emit_progress(
+    progress_callback: Callable[[dict], None] | None,
+    loaded_candles: int,
+    expected_candles: int,
+    last_kline: BinanceKline,
+    mode: str,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "symbol": CONFIG.symbol,
+            "interval": "1m",
+            "loaded_candles": loaded_candles,
+            "expected_candles": expected_candles,
+            "progress_pct": min(100.0, loaded_candles / expected_candles * 100),
+            "last_open_time": binance_kline_to_candle(last_kline).open_time,
+            "mode": mode,
+        }
+    )
+
+
+def _fetch_klines_range(
     start_time_ms: int,
     end_time_ms: int,
-    output_path: Path | None = None,
-    progress_callback: Callable[[dict], None] | None = None,
-) -> CandleDataset:
-    """Download public ETHUSDC 1m klines, save CSV, and update the data catalog."""
-    if start_time_ms <= 0:
-        msg = "start_time_ms must be positive"
-        raise ValueError(msg)
-    if end_time_ms <= start_time_ms:
-        msg = "end_time_ms must be greater than start_time_ms"
-        raise ValueError(msg)
-
-    target_path = output_path or DEFAULT_BINANCE_CANDLE_PATH
+    progress_callback: Callable[[dict], None] | None,
+    mode: str,
+) -> list[BinanceKline]:
     klines: list[BinanceKline] = []
     current_start = start_time_ms
     expected_candles = max(1, ((end_time_ms - start_time_ms) // ONE_MINUTE_MS) + 1)
@@ -74,27 +102,76 @@ def download_ethusdc_1m_candles(
             msg = "Binance pagination did not return new klines"
             raise RuntimeError(msg)
         klines.extend(new_klines)
-        if progress_callback is not None:
-            loaded_candles = len(klines)
-            progress_callback(
-                {
-                    "symbol": CONFIG.symbol,
-                    "interval": "1m",
-                    "loaded_candles": loaded_candles,
-                    "expected_candles": expected_candles,
-                    "progress_pct": min(100.0, loaded_candles / expected_candles * 100),
-                    "last_open_time": binance_kline_to_candle(new_klines[-1]).open_time,
-                }
-            )
+        _emit_progress(progress_callback, len(klines), expected_candles, new_klines[-1], mode)
         next_start = new_klines[-1].open_time_ms + ONE_MINUTE_MS
         if previous_next_start is not None and next_start <= previous_next_start:
             msg = "Binance pagination did not advance"
             raise RuntimeError(msg)
         previous_next_start = next_start
         current_start = next_start
+    return klines
 
+
+def download_ethusdc_1m_candles(
+    start_time_ms: int,
+    end_time_ms: int,
+    output_path: Path | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> CandleDataset:
+    """Download public ETHUSDC 1m klines, save CSV, and update the data catalog."""
+    if start_time_ms <= 0:
+        msg = "start_time_ms must be positive"
+        raise ValueError(msg)
+    if end_time_ms <= start_time_ms:
+        msg = "end_time_ms must be greater than start_time_ms"
+        raise ValueError(msg)
+
+    target_path = output_path or DEFAULT_BINANCE_CANDLE_PATH
+    klines = _fetch_klines_range(start_time_ms, end_time_ms, progress_callback, "full_download")
     candles = [binance_kline_to_candle(kline) for kline in klines]
     dataset = CandleDataset(symbol=CONFIG.symbol, interval="1m", candles=candles)
-    save_candle_dataset_to_csv(dataset, target_path)
-    save_data_catalog([CandleDataCatalogEntry(CONFIG.symbol, "1m", str(target_path))])
+    _save_dataset_and_catalog(dataset, target_path)
     return dataset
+
+
+def update_ethusdc_1m_candles(
+    output_path: Path | None = None,
+    required_candles: int | None = None,
+    safety_days: int = 2,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> CandleDataset:
+    """Incrementally update local public ETHUSDC 1m candle data."""
+    target_path = output_path or DEFAULT_BINANCE_CANDLE_PATH
+    now_ms = _utc_now_ms()
+    needed_candles = required_candles or REQUIRED_CANDLE_COUNT
+    safety_candles = safety_days * 24 * 60
+
+    if not target_path.exists():
+        start_time_ms = now_ms - (needed_candles + safety_candles) * ONE_MINUTE_MS
+        return download_ethusdc_1m_candles(
+            start_time_ms=start_time_ms,
+            end_time_ms=now_ms,
+            output_path=target_path,
+            progress_callback=progress_callback,
+        )
+
+    existing_dataset = load_candle_dataset_from_csv(target_path)
+    last_open_time_ms = _open_time_to_ms(existing_dataset.candles[-1].open_time)
+    next_missing_time_ms = last_open_time_ms + ONE_MINUTE_MS
+    if next_missing_time_ms > now_ms:
+        _save_dataset_and_catalog(existing_dataset, target_path)
+        return existing_dataset
+
+    new_klines = _fetch_klines_range(
+        next_missing_time_ms,
+        now_ms,
+        progress_callback,
+        "incremental_update",
+    )
+    combined_by_open_time = {candle.open_time: candle for candle in existing_dataset.candles}
+    for candle in [binance_kline_to_candle(kline) for kline in new_klines]:
+        combined_by_open_time[candle.open_time] = candle
+    combined_candles = [combined_by_open_time[key] for key in sorted(combined_by_open_time)]
+    updated_dataset = CandleDataset(CONFIG.symbol, "1m", combined_candles)
+    _save_dataset_and_catalog(updated_dataset, target_path)
+    return updated_dataset

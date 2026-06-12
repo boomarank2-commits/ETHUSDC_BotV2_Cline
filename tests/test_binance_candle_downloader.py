@@ -7,13 +7,25 @@ import src.data.binance_candle_downloader as downloader_module
 from src.data.binance_candle_downloader import (
     binance_kline_to_candle,
     download_ethusdc_1m_candles,
+    update_ethusdc_1m_candles,
 )
 from src.data.binance_kline_client import BinanceKline
+from src.data.candle_csv_io import save_candle_dataset_to_csv
+from src.data.candle_dataset import CandleDataset
+from src.data.candle_schema import Candle
 from src.data.data_catalog import load_data_catalog
 
 
 def _kline(open_time_ms: int, close: float = 105.0) -> BinanceKline:
     return BinanceKline(open_time_ms, 100.0, 110.0, 90.0, close, 1.0)
+
+
+def _dataset(open_times: list[str]) -> CandleDataset:
+    return CandleDataset(
+        "ETHUSDC",
+        "1m",
+        [Candle(open_time, 100.0, 110.0, 90.0, 105.0, 1.0) for open_time in open_times],
+    )
 
 
 def test_binance_kline_is_converted_to_candle() -> None:
@@ -196,3 +208,131 @@ def test_no_trading_mode_fields_are_introduced() -> None:
     assert "futures" not in field_names
     assert "margin" not in field_names
     assert "leverage" not in field_names
+
+
+def test_missing_csv_triggers_full_download(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    progress_events: list[dict] = []
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 120_000)
+    monkeypatch.setattr(
+        downloader_module,
+        "fetch_binance_klines",
+        lambda *args, **kwargs: [_kline(60_000), _kline(120_000)],
+    )
+
+    dataset = update_ethusdc_1m_candles(
+        tmp_path / "candles.csv",
+        required_candles=1,
+        safety_days=0,
+        progress_callback=progress_events.append,
+    )
+
+    assert len(dataset.candles) == 2
+    assert progress_events[0]["mode"] == "full_download"
+
+
+def test_current_csv_does_not_download(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 60_000)
+
+    def fail_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        raise AssertionError("download should not be called")
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fail_fetch)
+
+    dataset = update_ethusdc_1m_candles(output_path, required_candles=1, safety_days=0)
+
+    assert len(dataset.candles) == 1
+
+
+def test_outdated_csv_downloads_only_missing_candles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    captured_start_times: list[int] = []
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 180_000)
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        captured_start_times.append(kwargs["start_time_ms"])
+        return [_kline(120_000), _kline(180_000)]
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    dataset = update_ethusdc_1m_candles(output_path, required_candles=1, safety_days=0)
+
+    assert captured_start_times == [120_000]
+    assert len(dataset.candles) == 3
+
+
+def test_update_prevents_duplicate_open_time(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 120_000)
+    monkeypatch.setattr(
+        downloader_module,
+        "fetch_binance_klines",
+        lambda *args, **kwargs: [_kline(60_000), _kline(120_000)],
+    )
+
+    dataset = update_ethusdc_1m_candles(output_path, required_candles=1, safety_days=0)
+    open_times = [candle.open_time for candle in dataset.candles]
+
+    assert len(open_times) == len(set(open_times))
+
+
+def test_update_result_remains_sorted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 180_000)
+    monkeypatch.setattr(
+        downloader_module,
+        "fetch_binance_klines",
+        lambda *args, **kwargs: [_kline(180_000), _kline(120_000)],
+    )
+
+    dataset = update_ethusdc_1m_candles(output_path, required_candles=1, safety_days=0)
+    open_times = [candle.open_time for candle in dataset.candles]
+
+    assert open_times == sorted(open_times)
+
+
+def test_update_catalog_is_updated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 60_000)
+
+    update_ethusdc_1m_candles(output_path, required_candles=1, safety_days=0)
+
+    assert load_data_catalog()[0].path == str(output_path)
+
+
+def test_update_progress_contains_incremental_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:01:00Z"]), output_path)
+    progress_events: list[dict] = []
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 120_000)
+    monkeypatch.setattr(
+        downloader_module,
+        "fetch_binance_klines",
+        lambda *args, **kwargs: [_kline(120_000)],
+    )
+
+    update_ethusdc_1m_candles(
+        output_path,
+        required_candles=1,
+        safety_days=0,
+        progress_callback=progress_events.append,
+    )
+
+    assert progress_events[0]["mode"] == "incremental_update"

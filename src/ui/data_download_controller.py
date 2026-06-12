@@ -1,13 +1,13 @@
 """UI controller for downloading public ETHUSDC 1m candle data."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Callable
 
 from src.common.config import CONFIG
 from src.data.binance_candle_downloader import (
     DEFAULT_BINANCE_CANDLE_PATH,
-    download_ethusdc_1m_candles,
+    update_ethusdc_1m_candles,
 )
 from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 
@@ -41,16 +41,30 @@ def download_required_ethusdc_1m_data_for_ui(
 ) -> DataDownloadUiResult:
     """Download enough public ETHUSDC 1m candles for the required lookback."""
     try:
-        start_time_ms, end_time_ms = _calculate_download_window_ms(datetime.now(tz=UTC))
-        dataset = download_ethusdc_1m_candles(
-            start_time_ms=start_time_ms,
-            end_time_ms=end_time_ms,
+        modes: list[str] = []
+
+        def capture_progress(progress: dict) -> None:
+            mode = progress.get("mode")
+            if isinstance(mode, str):
+                modes.append(mode)
+            if progress_callback is not None:
+                progress_callback(progress)
+
+        dataset = update_ethusdc_1m_candles(
             output_path=DEFAULT_BINANCE_CANDLE_PATH,
-            progress_callback=progress_callback,
+            required_candles=REQUIRED_CANDLE_COUNT,
+            safety_days=DOWNLOAD_BUFFER_DAYS,
+            progress_callback=capture_progress,
         )
+        if "full_download" in modes:
+            message = "Daten vollständig neu geladen. Danach kann der Backtest gestartet werden."
+        elif "incremental_update" in modes:
+            message = "Daten aktualisiert. Danach kann der Backtest gestartet werden."
+        else:
+            message = "Daten waren bereits aktuell. Danach kann der Backtest gestartet werden."
         return DataDownloadUiResult(
             success=True,
-            message="Daten wurden geladen. Danach kann der Backtest gestartet werden.",
+            message=message,
             symbol=CONFIG.symbol,
             interval="1m",
             candle_count=len(dataset.candles),

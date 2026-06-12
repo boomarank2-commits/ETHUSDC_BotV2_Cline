@@ -553,3 +553,14 @@ Created/changed:
 
 Purpose:
 - Train fixed LONG-only Strategy V0 candidates, freeze best training candidate, run blindtest, save report, and prefer V0 in summary.
+
+## 2026-06-12 - Incremental ETHUSDC 1m update added
+
+Changed:
+- src/data/binance_candle_downloader.py
+- src/ui/data_download_controller.py
+- tests/test_binance_candle_downloader.py
+- tests/test_data_download_controller.py
+
+Purpose:
+- Existing local ETHUSDC 1m CSVs are now updated incrementally; full download only happens when local data is missing.
