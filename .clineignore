@@ -1,0 +1,34 @@
+﻿# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Python / virtual env / cache
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Large data
+data/
+*.csv
+*.parquet
+*.sqlite
+*.db
+
+# Generated outputs
+reports/
+logs/
+
+# Archive / old material
+docs-archive/
+old-bot/
+BotV1Cline_ARCHIV_NICHT_BEARBEITEN/
+
+# Build artifacts
+dist/
+build/

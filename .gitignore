@@ -1,0 +1,29 @@
+﻿# Secrets
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data / reports / logs
+data/
+reports/
+logs/
+*.csv
+*.parquet
+*.sqlite
+*.db
+
+# Build
+dist/
+build/
+
+# Editor
+.vscode/
+.idea/

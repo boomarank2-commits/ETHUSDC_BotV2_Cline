@@ -1,0 +1,22 @@
+[project]
+name = "ethusdc-bot-v2-cline"
+version = "0.1.0"
+description = "Clean rebuild of an ETHUSDC Adaptive Spot LONG-only Bot"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
