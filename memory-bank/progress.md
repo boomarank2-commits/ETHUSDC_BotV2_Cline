@@ -314,3 +314,15 @@ Tests:
 - python -m pytest: 76 passed in 0.15s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 32 files already formatted.
+
+## 2026-06-12 - Short handoff rules added
+
+Updated:
+- .clinerules/04-token-discipline.md
+- .clinerules/05-testing-and-handoff.md
+
+Purpose:
+- Final reports max 10 lines.
+- Use Changed / Tests / Result / Next format.
+- Avoid repeated long negative lists unless there is risk.
+- Closely related files may be handled in one task.
