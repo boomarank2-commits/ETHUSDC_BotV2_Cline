@@ -209,3 +209,29 @@ Tests:
 - python -m pytest: 36 passed in 0.07s
 - python -m ruff check . --no-cache: All checks passed.
 - python -m ruff format --check . --no-cache: 24 files already formatted.
+
+## 2026-06-12 - Backtest run request schema created
+
+Created:
+- src/backtest/run_request.py
+- tests/test_backtest_run_request.py
+
+Purpose:
+- Technical request schema for a later Backtest start.
+- Validates confirmed ETHUSDC / USDC / Binance Spot / 730 / 365 settings.
+- Rejects forbidden modes and unsafe run_id values.
+
+Scope:
+- Schema and validation only.
+- No trading code.
+- No backtest execution.
+- No backtest calculation.
+- No strategy.
+- No data logic.
+- No Binance connection.
+- No UI.
+
+Tests:
+- python -m pytest: 50 passed in 0.08s
+- python -m ruff check . --no-cache: All checks passed.
+- python -m ruff format --check . --no-cache: 26 files already formatted.
