@@ -41,6 +41,7 @@ def test_saved_json_contains_confirmed_request_values() -> None:
     assert raw_request["quote_asset"] == "USDC"
     assert raw_request["training_days"] == 730
     assert raw_request["blindtest_days"] == 365
+    assert raw_request["run_type"] == "full_backtest"
 
 
 def test_forbidden_trading_modes_remain_false() -> None:

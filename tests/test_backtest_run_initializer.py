@@ -12,6 +12,16 @@ def test_initialize_backtest_run_creates_valid_request() -> None:
     assert request.exchange == "Binance Spot"
     assert request.training_days == 730
     assert request.blindtest_days == 365
+    assert request.run_type == "full_backtest"
+
+
+def test_initialize_smoke_run_writes_smoke_request() -> None:
+    request = initialize_backtest_run(run_type="smoke_test", blindtest_days=7)
+
+    assert request.run_type == "smoke_test"
+    assert request.training_days == 14
+    assert request.blindtest_days == 7
+    assert load_backtest_run_request(request.run_id) == request
 
 
 def test_initialized_run_id_starts_with_run_prefix() -> None:

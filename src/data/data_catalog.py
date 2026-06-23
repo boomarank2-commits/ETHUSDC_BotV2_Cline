@@ -7,6 +7,7 @@ from typing import Any
 
 from src.common.config import CONFIG
 from src.common.paths import CONFIGS_DIR
+from src.data.candle_dataset import ALLOWED_CANDLE_SYMBOLS
 
 CATALOG_FILENAME = "data_catalog.json"
 DEFAULT_ETHUSDC_1M_PATH = "data/candles/ETHUSDC_1m.csv"
@@ -21,8 +22,8 @@ class CandleDataCatalogEntry:
     path: str
 
     def __post_init__(self) -> None:
-        if self.symbol != CONFIG.symbol:
-            msg = f"symbol must be {CONFIG.symbol}"
+        if self.symbol not in ALLOWED_CANDLE_SYMBOLS:
+            msg = f"symbol must be one of: {', '.join(ALLOWED_CANDLE_SYMBOLS)}"
             raise ValueError(msg)
         if self.interval != "1m":
             msg = 'interval must be "1m"'
@@ -57,6 +58,16 @@ def save_data_catalog(entries: list[CandleDataCatalogEntry]) -> Path:
     content = json.dumps([asdict(entry) for entry in entries], indent=2, sort_keys=True)
     catalog_path.write_text(f"{content}\n", encoding="utf-8")
     return catalog_path
+
+
+def upsert_data_catalog_entry(entry: CandleDataCatalogEntry) -> Path:
+    """Insert or replace one catalog entry while preserving other symbols."""
+    entries = []
+    if get_catalog_path().exists():
+        entries = load_data_catalog()
+    kept = [existing for existing in entries if not (existing.symbol == entry.symbol and existing.interval == entry.interval)]
+    kept.append(entry)
+    return save_data_catalog(kept)
 
 
 def load_data_catalog() -> list[CandleDataCatalogEntry]:

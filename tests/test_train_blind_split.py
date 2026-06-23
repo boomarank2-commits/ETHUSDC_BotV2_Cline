@@ -52,6 +52,15 @@ def test_valid_dataset_creates_training_and_blindtest_lengths() -> None:
     assert len(split.blindtest_candles) == 2
 
 
+def test_smoke_split_uses_two_to_one_training_blindtest_days(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(split_module, "CANDLES_PER_DAY_1M", 2)
+    split = build_train_blind_split(_dataset(50), training_days=14, blindtest_days=7)
+
+    assert len(split.training_candles) == 28
+    assert len(split.blindtest_candles) == 14
+    assert split.training_end < split.blindtest_start
+
+
 def test_more_candles_uses_latest_required_candles() -> None:
     split = build_train_blind_split(_dataset(7))
 

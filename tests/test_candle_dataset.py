@@ -16,7 +16,7 @@ def test_valid_ethusdc_1m_dataset_is_accepted() -> None:
 
 def test_wrong_symbol_is_rejected() -> None:
     with pytest.raises(ValueError):
-        CandleDataset("BTCUSDC", "1m", [_candle("2026-01-01T00:00:00Z")])
+        CandleDataset("XRPUSDC", "1m", [_candle("2026-01-01T00:00:00Z")])
 
 
 def test_wrong_interval_is_rejected() -> None:

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from src.common.config import CONFIG
 from src.data.candle_schema import Candle
 
+ALLOWED_CANDLE_SYMBOLS = (CONFIG.symbol, "BTCUSDC", "ETHBTC")
+
 
 @dataclass(frozen=True)
 class CandleDataset:
@@ -15,8 +17,8 @@ class CandleDataset:
     candles: list[Candle]
 
     def __post_init__(self) -> None:
-        if self.symbol != CONFIG.symbol:
-            msg = f"symbol must be {CONFIG.symbol}"
+        if self.symbol not in ALLOWED_CANDLE_SYMBOLS:
+            msg = f"symbol must be one of: {', '.join(ALLOWED_CANDLE_SYMBOLS)}"
             raise ValueError(msg)
 
         if self.interval != "1m":

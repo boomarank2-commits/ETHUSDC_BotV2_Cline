@@ -17,6 +17,8 @@ from src.data.candle_schema import Candle
 from src.data.data_catalog import CandleDataCatalogEntry, get_catalog_path, save_data_catalog
 from src.data.data_preparation_report import DataPreparationReport
 from src.reports.backtest_summary import load_backtest_summary
+from src.data.train_blind_split_report import load_train_blind_split_report
+from src.router.cluster_router_report import load_cluster_router_report
 
 
 def _candle(index: int) -> Candle:
@@ -61,6 +63,39 @@ def test_successful_pipeline_creates_data_preparation_report(fast_success_pipeli
     result = run_backtest_preparation_pipeline()
 
     assert Path(result.data_preparation_report_path).is_file()
+    assert result.run_type == "full_backtest"
+
+
+def test_smoke_pipeline_uses_same_engine_with_short_split(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(split_module, "CANDLES_PER_DAY_1M", 2)
+    monkeypatch.setattr(pipeline_module, "build_data_preparation_report", _usable_report)
+    _write_catalog(tmp_path, _dataset(50))
+    captured: dict[str, object] = {}
+    original_cluster_router = pipeline_module.build_cluster_router_report
+
+    def capturing_cluster_router(run_id, split, **kwargs):
+        captured["engine"] = "cluster_router"
+        captured["training_candles"] = len(split.training_candles)
+        captured["blindtest_candles"] = len(split.blindtest_candles)
+        return original_cluster_router(run_id, split, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "build_cluster_router_report", capturing_cluster_router)
+
+    result = run_backtest_preparation_pipeline(run_type="smoke_test", blindtest_days=7)
+    split_report = load_train_blind_split_report(result.run_id)
+    summary = load_backtest_summary(result.run_id)
+    cluster_report = load_cluster_router_report(result.run_id)
+
+    assert result.run_type == "smoke_test"
+    assert captured == {"engine": "cluster_router", "training_candles": 28, "blindtest_candles": 14}
+    assert split_report.training_candle_count == 28
+    assert split_report.blindtest_candle_count == 14
+    assert summary.run_type == "smoke_test"
+    assert summary.selected_family == "cluster_router"
+    assert cluster_report.router_artifact["run_type"] == "smoke_test"
+    assert cluster_report.router_artifact["training_only"] is True
+    assert cluster_report.router_artifact["blindtest_learning_allowed"] is False
+    assert cluster_report.router_artifact["live_release_allowed"] is False
 
 
 def test_successful_pipeline_creates_train_blind_split_report(fast_success_pipeline: None) -> None:
@@ -90,6 +125,13 @@ def test_successful_pipeline_creates_strategy_v1_report(fast_success_pipeline: N
 
     assert result.strategy_v1_report_path is not None
     assert Path(result.strategy_v1_report_path).is_file()
+
+
+def test_successful_pipeline_creates_cluster_router_report(fast_success_pipeline: None) -> None:
+    result = run_backtest_preparation_pipeline()
+
+    assert result.cluster_router_report_path is not None
+    assert Path(result.cluster_router_report_path).is_file()
 
 
 def test_pipeline_forwards_stake_and_profile_to_strategy_v1(
@@ -214,6 +256,7 @@ def test_not_enough_dataset_fails_and_saves_data_report(tmp_path: Path) -> None:
     assert result.buy_hold_benchmark_report_path is None
     assert result.strategy_v0_report_path is None
     assert result.strategy_v1_report_path is None
+    assert result.cluster_router_report_path is None
     assert result.backtest_summary_path is not None
     assert load_backtest_summary(result.run_id).status == "failed"
 

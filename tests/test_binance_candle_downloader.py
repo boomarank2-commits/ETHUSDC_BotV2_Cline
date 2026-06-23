@@ -412,3 +412,25 @@ def test_resume_partial_download_starts_after_existing_last_candle(
     assert captured_starts == [120_000]
     assert len(dataset.candles) == 2
     assert progress_events[-1]["mode"] == "resume_partial_download"
+
+
+def test_incomplete_existing_csv_backfills_history_before_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "candles.csv"
+    save_candle_dataset_to_csv(_dataset(["1970-01-01T00:10:00Z"]), output_path)
+    captured: list[tuple[str, int]] = []
+    monkeypatch.setattr(downloader_module, "_utc_now_ms", lambda: 660_000)
+
+    def fake_fetch(*args: object, **kwargs: object) -> list[BinanceKline]:
+        captured.append((kwargs.get("symbol", "ETHUSDC"), kwargs["start_time_ms"]))
+        start = kwargs["start_time_ms"]
+        return [_kline(start)]
+
+    monkeypatch.setattr(downloader_module, "fetch_binance_klines", fake_fetch)
+
+    dataset = update_ethusdc_1m_candles(output_path, required_candles=3, safety_days=0)
+
+    assert captured[0][1] == 480_000
+    assert len(dataset.candles) >= 3

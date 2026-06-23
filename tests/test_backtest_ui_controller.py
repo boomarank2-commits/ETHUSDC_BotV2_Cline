@@ -1,10 +1,32 @@
 from dataclasses import fields
 
+import pytest
+
 import src.ui.backtest_ui_controller as controller_module
 from src.backtest.preparation_pipeline import PreparationPipelineResult
 from src.data.candle_data_ensure import CandleDataEnsureResult
+from src.data.context_data_ensure import ContextDataEnsureResult
+from src.data.exchange_info import ExchangeInfoStatus
 from src.reports.backtest_summary import BacktestSummary
-from src.ui.backtest_ui_controller import BacktestUiResult, BacktestUiSettings, run_backtest_for_ui
+from src.common.runtime_state import RuntimeState
+from src.backtest.run_progress import BacktestRunProgress
+from src.ui.backtest_ui_controller import (
+    BacktestUiResult,
+    BacktestUiSettings,
+    load_active_backtest_result_for_ui,
+    load_latest_completed_backtest_result_for_ui,
+    run_backtest_for_ui,
+)
+
+
+@pytest.fixture(autouse=True)
+def no_context_download(monkeypatch):
+    monkeypatch.setattr(controller_module, "ensure_all_context_data_ready", lambda progress_callback=None: [])
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_exchange_info_current",
+        lambda: ExchangeInfoStatus("ETHUSDC", "exchange.json", True, False, 1.0, 1, True, True, None),
+    )
 
 
 def _ensure_result(success: bool = True, candle_count: int = 5) -> CandleDataEnsureResult:
@@ -32,11 +54,14 @@ def _pipeline_result(
     return PreparationPipelineResult(
         run_id="run_20260612_220001",
         status="completed" if summary_path else "failed",
+        run_type="full_backtest",
         data_preparation_report_path="data.json",
+        data_overview_report_path="data_overview.json" if summary_path else None,
         train_blind_split_report_path="split.json",
         buy_hold_benchmark_report_path="benchmark.json" if summary_path else None,
         strategy_v0_report_path="strategy.json" if summary_path else None,
         strategy_v1_report_path="strategy_v1.json" if summary_path else None,
+        cluster_router_report_path="cluster_router.json" if summary_path else None,
         backtest_summary_path=summary_path,
         progress_path="progress.json",
         error=None if summary_path else "missing summary",
@@ -62,6 +87,10 @@ def _summary() -> BacktestSummary:
         detected_gaps=0,
         usable_for_backtest=True,
         message="completed",
+        best_training_quote_per_day=0.4,
+        target_feasibility_status="target_out_of_reach_current_space",
+        target_min_training_ratio=0.2667,
+        run_type="full_backtest",
     )
 
 
@@ -111,6 +140,8 @@ def test_controller_provides_dashboard_fields(monkeypatch) -> None:
     assert result.detected_gaps == 0
     assert result.usable_for_backtest is True
     assert result.report_folder is not None
+    assert result.best_training_quote_per_day == 0.4
+    assert result.target_feasibility_status == "target_out_of_reach_current_space"
 
 
 def test_completed_summary_contains_result_values(monkeypatch) -> None:
@@ -188,6 +219,35 @@ def test_controller_does_not_start_pipeline_when_ensure_has_one_candle(monkeypat
     assert pipeline_called is False
 
 
+def test_controller_does_not_start_pipeline_when_context_is_incomplete(monkeypatch) -> None:
+    pipeline_called = False
+
+    def fake_pipeline(**kwargs):
+        nonlocal pipeline_called
+        pipeline_called = True
+        return _pipeline_result()
+
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_all_context_data_ready",
+        lambda progress_callback=None: [
+            ContextDataEnsureResult("BTCUSDC", False, "not_enough_data", 1, None, False, False, "btc.csv", "not_enough_data")
+        ],
+    )
+    monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
+
+    result = run_backtest_for_ui()
+
+    assert result.success is False
+    assert "Kontextdaten fehlen" in result.message
+    assert pipeline_called is False
+
+
 def test_valid_stakes_are_accepted() -> None:
     for stake in (5.0, 100.0, 1005.0, 100000.0):
         assert BacktestUiSettings(stake_quote_amount=stake).stake_quote_amount == stake
@@ -253,6 +313,30 @@ def test_settings_are_forwarded_to_pipeline(monkeypatch) -> None:
 
     assert captured["stake_quote_amount"] == 500.0
     assert captured["profile"] == "aggressive"
+    assert captured["run_type"] == "full_backtest"
+
+
+def test_smoke_settings_forward_short_window_to_same_pipeline(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+    )
+
+    def fake_pipeline(**kwargs):
+        captured.update(kwargs)
+        return _pipeline_result()
+
+    monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
+    monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: BacktestSummary(**{**_summary().__dict__, "run_type": "smoke_test"}))
+
+    result = run_backtest_for_ui(BacktestUiSettings(run_type="smoke_test", blindtest_days=7))
+
+    assert captured["run_type"] == "smoke_test"
+    assert captured["blindtest_days"] == 7
+    assert captured["training_days"] == 14
+    assert result.run_type == "smoke_test"
 
 
 def test_progress_callback_receives_phases(monkeypatch) -> None:
@@ -276,6 +360,133 @@ def test_progress_callback_receives_phases(monkeypatch) -> None:
     assert "data_check_started" in phases
     assert "data_ensure" in phases
     assert "completed" in phases
+
+
+def test_load_active_backtest_result_uses_runtime_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        controller_module,
+        "load_runtime_state",
+        lambda: RuntimeState(
+            active_run_id="run_20260612_220001", status="completed", last_error=None
+        ),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "get_run_report_dir",
+        lambda run_id: type(
+            "FakePath",
+            (),
+            {
+                "__truediv__": lambda self, name: type(
+                    "FakeSummaryPath", (), {"exists": lambda self: True, "__str__": lambda self: name}
+                )()
+            },
+        )(),
+    )
+    monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
+
+    result = load_active_backtest_result_for_ui()
+
+    assert result is not None
+    assert result.run_id == "run_20260612_220001"
+    assert result.status == "completed"
+
+
+def test_load_active_backtest_result_falls_back_to_latest_summary_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        controller_module,
+        "load_runtime_state",
+        lambda: RuntimeState(
+            active_run_id="run_20260612_230003", status="running", last_error=None
+        ),
+    )
+    reports_dir = tmp_path / "reports" / "backtests"
+    (reports_dir / "run_20260612_230001").mkdir(parents=True)
+    (reports_dir / "run_20260612_230001" / "backtest_summary.json").write_text("{}", encoding="utf-8")
+    (reports_dir / "run_20260612_230002").mkdir()
+    (reports_dir / "run_20260612_230002" / "backtest_summary.json").write_text("{}", encoding="utf-8")
+    (reports_dir / "run_20260612_230003").mkdir()
+    monkeypatch.setattr(controller_module, "BACKTEST_REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(controller_module, "get_run_report_dir", lambda run_id: reports_dir / run_id)
+    monkeypatch.setattr(
+        controller_module,
+        "load_backtest_summary",
+        lambda run_id: BacktestSummary(**{**_summary().__dict__, "run_id": run_id}),
+    )
+
+    result = load_active_backtest_result_for_ui()
+
+    assert result is not None
+    assert result.run_id == "run_20260612_230002"
+    assert result.status == "completed"
+
+
+def test_load_latest_completed_backtest_result_ignores_running_active_run(monkeypatch, tmp_path) -> None:
+    reports_dir = tmp_path / "reports" / "backtests"
+    (reports_dir / "run_20260612_230010").mkdir(parents=True)
+    (reports_dir / "run_20260612_230010" / "backtest_summary.json").write_text("{}", encoding="utf-8")
+    (reports_dir / "run_20260612_230011").mkdir()
+    monkeypatch.setattr(controller_module, "BACKTEST_REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(controller_module, "get_run_report_dir", lambda run_id: reports_dir / run_id)
+    monkeypatch.setattr(
+        controller_module,
+        "load_backtest_summary",
+        lambda run_id: BacktestSummary(**{**_summary().__dict__, "run_id": run_id}),
+    )
+
+    result = load_latest_completed_backtest_result_for_ui()
+
+    assert result is not None
+    assert result.run_id == "run_20260612_230010"
+    assert result.status == "completed"
+
+
+def test_load_active_backtest_result_shows_running_run_without_summary(monkeypatch, tmp_path) -> None:
+    run_id = "run_20260612_230004"
+    reports_dir = tmp_path / "reports" / "backtests"
+    run_dir = reports_dir / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "progress.json").write_text(
+        '{"run_id":"run_20260612_230004","status":"running","stage":"strategy_v1","progress_pct":75.0,"message":null,"error":null}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "load_runtime_state",
+        lambda: RuntimeState(active_run_id=run_id, status="running", last_error=None),
+    )
+    monkeypatch.setattr(controller_module, "BACKTEST_REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(controller_module, "get_run_report_dir", lambda active_run_id: reports_dir / active_run_id)
+    monkeypatch.setattr(
+        controller_module,
+        "load_run_progress",
+        lambda active_run_id: BacktestRunProgress(active_run_id, "running", "strategy_v1", 75.0, None, None, 300.0, 100.0),
+    )
+    monkeypatch.setattr(controller_module, "time", lambda: (run_dir / "run_request.json").stat().st_mtime + 300.0)
+    (run_dir / "run_request.json").write_text("{}", encoding="utf-8")
+
+    result = load_active_backtest_result_for_ui()
+
+    assert result is not None
+    assert result.run_id == run_id
+    assert result.status == "running"
+    assert "Backtest läuft" in result.message
+    assert result.progress_pct == 75.0
+    assert result.progress_stage == "strategy_v1"
+    assert result.elapsed_seconds == 300.0
+    assert result.estimated_remaining_seconds == 100.0
+    assert "Rest geschätzt" in result.message
+
+
+def test_load_active_backtest_result_returns_none_without_active_run_or_summary(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        controller_module,
+        "load_runtime_state",
+        lambda: RuntimeState(active_run_id=None, status="idle", last_error=None),
+    )
+    monkeypatch.setattr(controller_module, "BACKTEST_REPORTS_DIR", tmp_path / "missing_backtests")
+
+    assert load_active_backtest_result_for_ui() is None
 
 
 def test_network_error_is_mapped_to_clear_ui_message(monkeypatch) -> None:

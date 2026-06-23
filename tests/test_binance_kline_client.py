@@ -70,7 +70,7 @@ def test_valid_response_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_wrong_symbol_is_rejected() -> None:
     with pytest.raises(ValueError):
-        fetch_binance_klines("BTCUSDC", "1m", 1)
+        fetch_binance_klines("XRPUSDC", "1m", 1)
 
 
 def test_wrong_interval_is_rejected() -> None:

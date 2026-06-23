@@ -47,6 +47,7 @@ class BacktestRunRequest:
     start_capital: float
     training_days: int
     blindtest_days: int
+    run_type: str
     time_budget_minutes: int | None
     allow_short: bool
     allow_futures: bool
@@ -60,8 +61,15 @@ class BacktestRunRequest:
         _require_equal("symbol", self.symbol, CONFIG.symbol)
         _require_equal("quote_asset", self.quote_asset, CONFIG.quote_asset)
         _require_equal("exchange", self.exchange, CONFIG.exchange)
-        _require_equal("training_days", self.training_days, CONFIG.training_days)
-        _require_equal("blindtest_days", self.blindtest_days, CONFIG.blindtest_days)
+        if self.run_type not in {"full_backtest", "smoke_test"}:
+            msg = "run_type must be full_backtest or smoke_test"
+            raise ValueError(msg)
+        if self.run_type == "full_backtest":
+            _require_equal("training_days", self.training_days, CONFIG.training_days)
+            _require_equal("blindtest_days", self.blindtest_days, CONFIG.blindtest_days)
+        elif self.blindtest_days not in {1, 7, 14, 30} or self.training_days != self.blindtest_days * 2:
+            msg = "smoke_test must use 2:1 training/blindtest days with blindtest 1, 7, 14 or 30"
+            raise ValueError(msg)
         _require_false("allow_short", self.allow_short)
         _require_false("allow_futures", self.allow_futures)
         _require_false("allow_margin", self.allow_margin)
@@ -78,16 +86,28 @@ class BacktestRunRequest:
             raise ValueError(msg)
 
 
-def default_backtest_run_request(run_id: str) -> BacktestRunRequest:
+def default_backtest_run_request(
+    run_id: str,
+    run_type: str = "full_backtest",
+    training_days: int | None = None,
+    blindtest_days: int | None = None,
+) -> BacktestRunRequest:
     """Create a default backtest run request from confirmed project config."""
+    if run_type == "smoke_test":
+        blindtest_days = 7 if blindtest_days is None else blindtest_days
+        training_days = blindtest_days * 2 if training_days is None else training_days
+    else:
+        training_days = CONFIG.training_days
+        blindtest_days = CONFIG.blindtest_days
     return BacktestRunRequest(
         run_id=run_id,
         symbol=CONFIG.symbol,
         quote_asset=CONFIG.quote_asset,
         exchange=CONFIG.exchange,
         start_capital=100.0,
-        training_days=CONFIG.training_days,
-        blindtest_days=CONFIG.blindtest_days,
+        training_days=training_days,
+        blindtest_days=blindtest_days,
+        run_type=run_type,
         time_budget_minutes=None,
         allow_short=CONFIG.allow_short,
         allow_futures=CONFIG.allow_futures,

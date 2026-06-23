@@ -15,11 +15,11 @@ from src.data.binance_candle_downloader import (
     update_ethusdc_1m_candles,
 )
 from src.data.candle_csv_io import load_candle_dataset_from_csv
-from src.data.data_catalog import CandleDataCatalogEntry, get_catalog_path, save_data_catalog
+from src.data.data_catalog import CandleDataCatalogEntry, get_catalog_path, upsert_data_catalog_entry
 from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 
 DOWNLOAD_BUFFER_DAYS = 2
-CURRENT_GRACE_MINUTES = 2
+CURRENT_GRACE_DAYS = 7
 NETWORK_ERROR_MESSAGE = (
     "Binance konnte nicht erreicht werden. Bereits geladene Daten wurden behalten. "
     "Bitte später erneut starten; der Download wird dann fortgesetzt, wenn möglich."
@@ -54,9 +54,7 @@ def _full_download_window_ms() -> tuple[int, int]:
 
 
 def _save_default_catalog(target_path: Path) -> str:
-    catalog_path = save_data_catalog(
-        [CandleDataCatalogEntry(CONFIG.symbol, "1m", str(target_path))]
-    )
+    catalog_path = upsert_data_catalog_entry(CandleDataCatalogEntry(CONFIG.symbol, "1m", str(target_path)))
     return str(catalog_path)
 
 
@@ -69,19 +67,43 @@ def _emit_progress(
 ) -> None:
     if progress_callback is None:
         return
+    last_open_time = extra.get("last_open_time")
     progress_callback(
         {
             "phase": "data_ensure",
+            "data_kind": "candles_1m",
+            "symbol": CONFIG.symbol,
+            "interval": "1m",
             "mode": mode,
             "message": detail,
             "detail": detail,
             "loaded_candles": extra.get("candle_count", 0),
             "expected_candles": extra.get("required_candles", REQUIRED_CANDLE_COUNT),
             "progress_pct": progress_pct,
-            "last_open_time": extra.get("last_open_time"),
+            "last_open_time": last_open_time,
+            "data_age_hours": _age_hours(last_open_time) if isinstance(last_open_time, str) else None,
+            "data_status": _data_status(mode),
             **extra,
         }
     )
+
+
+def _age_hours(open_time: str) -> float:
+    normalized = open_time.replace("Z", "+00:00")
+    last_timestamp = datetime.fromisoformat(normalized).astimezone(UTC)
+    return round((datetime.now(tz=UTC) - last_timestamp).total_seconds() / 3600, 4)
+
+
+def _data_status(mode: str) -> str:
+    if mode == "already_current":
+        return "current"
+    if mode in {"incremental_update", "resume_partial_download"}:
+        return "outdated"
+    if mode == "full_download":
+        return "missing"
+    if mode == "failed":
+        return "failed"
+    return "checking"
 
 
 def _is_network_error(message: str) -> bool:
@@ -101,7 +123,7 @@ def _is_network_error(message: str) -> bool:
 
 def _is_current(last_open_time: str) -> bool:
     last_open_time_ms = _open_time_to_ms(last_open_time)
-    return (_utc_now_ms() - last_open_time_ms) <= CURRENT_GRACE_MINUTES * ONE_MINUTE_MS
+    return (_utc_now_ms() - last_open_time_ms) <= CURRENT_GRACE_DAYS * 24 * 60 * ONE_MINUTE_MS
 
 
 def _normalize_downloader_progress(
@@ -113,16 +135,22 @@ def _normalize_downloader_progress(
     def wrapped(progress: dict) -> None:
         mode = progress.get("mode", "download")
         message = progress.get("message") or f"ETHUSDC 1m Daten: {mode}"
+        last_open_time = progress.get("last_open_time")
         progress_callback(
             {
                 "phase": progress.get("phase", "data_ensure"),
+                "data_kind": "candles_1m",
+                "symbol": CONFIG.symbol,
+                "interval": "1m",
                 "mode": mode,
                 "message": message,
                 "detail": progress.get("detail", message),
                 "loaded_candles": progress.get("loaded_candles", progress.get("candle_count", 0)),
                 "expected_candles": progress.get("expected_candles", REQUIRED_CANDLE_COUNT),
                 "progress_pct": progress.get("progress_pct"),
-                "last_open_time": progress.get("last_open_time"),
+                "last_open_time": last_open_time,
+                "data_age_hours": _age_hours(last_open_time) if isinstance(last_open_time, str) else None,
+                "data_status": _data_status(str(mode)),
                 **progress,
             }
         )

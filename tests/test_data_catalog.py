@@ -34,7 +34,7 @@ def test_save_and_load_data_catalog() -> None:
 
 def test_wrong_symbol_is_rejected() -> None:
     with pytest.raises(ValueError):
-        CandleDataCatalogEntry("BTCUSDC", "1m", DEFAULT_ETHUSDC_1M_PATH)
+        CandleDataCatalogEntry("XRPUSDC", "1m", DEFAULT_ETHUSDC_1M_PATH)
 
 
 def test_wrong_interval_is_rejected() -> None:

@@ -8,8 +8,10 @@
 .venv/
 venv/
 __pycache__/
+**/__pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -18,6 +20,7 @@ data/
 *.csv
 *.parquet
 *.sqlite
+*.joblib
 *.db
 
 # Generated outputs

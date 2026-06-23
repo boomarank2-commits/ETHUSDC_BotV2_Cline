@@ -21,6 +21,8 @@ class BacktestRunProgress:
     progress_pct: float
     message: str | None
     error: str | None
+    runtime_seconds: float | None = None
+    estimated_remaining_seconds: float | None = None
 
     def __post_init__(self) -> None:
         get_run_report_dir(self.run_id)

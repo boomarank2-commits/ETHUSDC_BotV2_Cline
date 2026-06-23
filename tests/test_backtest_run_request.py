@@ -12,6 +12,7 @@ def _valid_request(**overrides: object) -> BacktestRunRequest:
         "start_capital": 100.0,
         "training_days": 730,
         "blindtest_days": 365,
+        "run_type": "full_backtest",
         "time_budget_minutes": None,
         "allow_short": False,
         "allow_futures": False,
@@ -43,6 +44,15 @@ def test_default_request_contains_training_and_blindtest_windows() -> None:
 
     assert request.training_days == 730
     assert request.blindtest_days == 365
+    assert request.run_type == "full_backtest"
+
+
+def test_smoke_request_uses_short_two_to_one_window() -> None:
+    request = default_backtest_run_request("run_20260612_140010", run_type="smoke_test", blindtest_days=7)
+
+    assert request.run_type == "smoke_test"
+    assert request.training_days == 14
+    assert request.blindtest_days == 7
 
 
 def test_start_capital_is_positive() -> None:

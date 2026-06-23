@@ -1,4 +1,6 @@
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
@@ -12,6 +14,20 @@ from src.common.runtime_state import (
 )
 
 
+@contextmanager
+def _preserved_runtime_state_file() -> Iterator[None]:
+    previous_content = RUNTIME_STATE_PATH.read_text(encoding="utf-8") if RUNTIME_STATE_PATH.exists() else None
+    try:
+        yield
+    finally:
+        if previous_content is None:
+            if RUNTIME_STATE_PATH.exists():
+                RUNTIME_STATE_PATH.unlink()
+        else:
+            RUNTIME_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            RUNTIME_STATE_PATH.write_text(previous_content, encoding="utf-8")
+
+
 def test_default_runtime_state_is_idle() -> None:
     state = default_runtime_state()
 
@@ -21,16 +37,16 @@ def test_default_runtime_state_is_idle() -> None:
 
 
 def test_save_and_load_runtime_state() -> None:
-    state = RuntimeState(
-        active_run_id="run_20260612_120000",
-        status="running",
-        last_error=None,
-    )
+    with _preserved_runtime_state_file():
+        state = RuntimeState(
+            active_run_id="run_20260612_120000",
+            status="running",
+            last_error=None,
+        )
 
-    save_runtime_state(state)
+        save_runtime_state(state)
 
-    assert load_runtime_state() == state
-    RUNTIME_STATE_PATH.unlink()
+        assert load_runtime_state() == state
 
 
 def test_runtime_state_json_is_under_configs_dir() -> None:
@@ -38,17 +54,17 @@ def test_runtime_state_json_is_under_configs_dir() -> None:
 
 
 def test_saved_runtime_state_json_is_readable() -> None:
-    state = RuntimeState(active_run_id=None, status="completed", last_error=None)
+    with _preserved_runtime_state_file():
+        state = RuntimeState(active_run_id=None, status="completed", last_error=None)
 
-    save_runtime_state(state)
-    raw_state = json.loads(RUNTIME_STATE_PATH.read_text(encoding="utf-8"))
+        save_runtime_state(state)
+        raw_state = json.loads(RUNTIME_STATE_PATH.read_text(encoding="utf-8"))
 
-    assert raw_state == {
-        "active_run_id": None,
-        "last_error": None,
-        "status": "completed",
-    }
-    RUNTIME_STATE_PATH.unlink()
+        assert raw_state == {
+            "active_run_id": None,
+            "last_error": None,
+            "status": "completed",
+        }
 
 
 def test_invalid_status_is_rejected() -> None:

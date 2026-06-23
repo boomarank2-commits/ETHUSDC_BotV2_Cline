@@ -6,6 +6,7 @@ import src.data.candle_data_ensure as ensure_module
 from src.data.candle_csv_io import load_candle_dataset_from_csv, save_candle_dataset_to_csv
 from src.data.candle_dataset import CandleDataset
 from src.data.candle_schema import Candle
+from src.data.data_catalog import CandleDataCatalogEntry, load_data_catalog, save_data_catalog
 
 
 def _candle(index: int) -> Candle:
@@ -82,6 +83,20 @@ def test_complete_current_csv_does_not_download(
     assert result.success is True
     assert result.already_current is True
     assert result.was_updated is False
+
+
+def test_ethusdc_ensure_preserves_context_catalog_entries(
+    monkeypatch: pytest.MonkeyPatch, fast_paths: Path, tmp_path: Path
+) -> None:
+    save_candle_dataset_to_csv(_dataset(5), fast_paths)
+    btc_path = tmp_path / "BTCUSDC_1m.csv"
+    save_data_catalog([CandleDataCatalogEntry("BTCUSDC", "1m", str(btc_path))])
+    monkeypatch.setattr(ensure_module, "_is_current", lambda last_open_time: True)
+
+    ensure_module.ensure_ethusdc_1m_data_ready()
+
+    symbols = {entry.symbol for entry in load_data_catalog()}
+    assert symbols == {"ETHUSDC", "BTCUSDC"}
 
 
 def test_current_csv_emits_already_current_mode(

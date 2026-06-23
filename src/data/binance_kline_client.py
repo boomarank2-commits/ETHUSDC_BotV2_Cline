@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from src.common.config import CONFIG
+from src.data.candle_dataset import ALLOWED_CANDLE_SYMBOLS
 
 DEFAULT_BINANCE_TIMEOUT_SECONDS = 30
 
@@ -30,8 +31,8 @@ class BinanceKline:
 
 
 def _validate_kline_request(symbol: str, interval: str, start_time_ms: int, limit: int) -> None:
-    if symbol != CONFIG.symbol:
-        msg = f"symbol must be {CONFIG.symbol}"
+    if symbol not in ALLOWED_CANDLE_SYMBOLS:
+        msg = f"symbol must be one of: {', '.join(ALLOWED_CANDLE_SYMBOLS)}"
         raise ValueError(msg)
     if interval != "1m":
         msg = 'interval must be "1m"'

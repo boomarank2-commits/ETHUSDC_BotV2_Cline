@@ -28,7 +28,11 @@ class TrainBlindSplit:
     blindtest_end: str
 
 
-def build_train_blind_split(dataset: CandleDataset) -> TrainBlindSplit:
+def build_train_blind_split(
+    dataset: CandleDataset,
+    training_days: int | None = None,
+    blindtest_days: int | None = None,
+) -> TrainBlindSplit:
     """Split the latest required candles into training and blindtest windows."""
     if dataset.symbol != CONFIG.symbol:
         msg = f"symbol must be {CONFIG.symbol}"
@@ -36,13 +40,19 @@ def build_train_blind_split(dataset: CandleDataset) -> TrainBlindSplit:
     if dataset.interval != "1m":
         msg = 'interval must be "1m"'
         raise ValueError(msg)
-    if len(dataset.candles) < REQUIRED_CANDLE_COUNT:
+    training_candle_count = TRAINING_CANDLE_COUNT if training_days is None else training_days * CANDLES_PER_DAY_1M
+    blindtest_candle_count = BLINDTEST_CANDLE_COUNT if blindtest_days is None else blindtest_days * CANDLES_PER_DAY_1M
+    required_candle_count = training_candle_count + blindtest_candle_count
+    if training_candle_count <= 0 or blindtest_candle_count <= 0:
+        msg = "training_days and blindtest_days must produce positive candle counts"
+        raise ValueError(msg)
+    if len(dataset.candles) < required_candle_count:
         msg = "dataset does not contain enough candles for train/blind split"
         raise ValueError(msg)
 
-    selected_candles = dataset.candles[-REQUIRED_CANDLE_COUNT:]
-    training_candles = selected_candles[:TRAINING_CANDLE_COUNT]
-    blindtest_candles = selected_candles[TRAINING_CANDLE_COUNT:]
+    selected_candles = dataset.candles[-required_candle_count:]
+    training_candles = selected_candles[:training_candle_count]
+    blindtest_candles = selected_candles[training_candle_count:]
 
     if training_candles[-1].open_time >= blindtest_candles[0].open_time:
         msg = "training window must end before blindtest window starts"

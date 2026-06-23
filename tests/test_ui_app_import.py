@@ -35,6 +35,16 @@ def test_ui_contains_stake_and_profile_settings() -> None:
     assert "aggressive" in source
 
 
+def test_ui_contains_smoke_test_button_and_duration_choices() -> None:
+    source = inspect.getsource(app_module)
+
+    assert "Smoke-Test starten" in source
+    assert "1 Tag Blindtest" in source
+    assert "7 Tage Blindtest" in source
+    assert "14 Tage Blindtest" in source
+    assert "30 Tage Blindtest" in source
+
+
 def test_ui_contains_clear_invalid_stake_message() -> None:
     source = inspect.getsource(app_module)
 
@@ -49,3 +59,30 @@ def test_ui_contains_progress_status_fields() -> None:
     assert "Fortschritt:" in source
     assert "Detail:" in source
     assert "Candles:" in source
+
+
+def test_ui_loads_active_run_and_shows_data_status_fields() -> None:
+    source = inspect.getsource(app_module)
+
+    assert "load_active_backtest_result_for_ui" in source
+    assert "Letzten Lauf laden" in source
+    assert "Datenart:" in source
+    assert "Datenstatus:" in source
+    assert "Datenalter:" in source
+
+
+def test_ui_result_section_is_not_mislabeled_as_buy_hold() -> None:
+    source = inspect.getsource(app_module)
+
+    assert "Backtest-Ergebnis (aktuell bevorzugter Report)" in source
+    assert "D) Buy-&-Hold Benchmark" not in source
+
+
+def test_ui_contains_clean_button_and_double_warning() -> None:
+    source = inspect.getsource(app_module)
+
+    assert "Alle Daten löschen / Bot clean machen" in source
+    assert "Achtung: Hiermit werden alle heruntergeladenen Markt-/Backtestdaten" in source
+    assert "Sind Sie 100% sicher?" in source
+    assert source.count("messagebox.askyesno") >= 2
+    assert "Clean-Zustand: Beim nächsten Backtest werden Daten neu geladen." in source or "result.message" in source

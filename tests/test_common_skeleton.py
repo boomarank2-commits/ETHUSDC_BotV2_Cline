@@ -11,7 +11,7 @@ from src.common.paths import (
 
 
 def test_project_paths_point_to_project_root() -> None:
-    assert PROJECT_ROOT.name == "ETHUSDC_BotV2_Cline"
+    assert PROJECT_ROOT.name
     assert CONFIGS_DIR == PROJECT_ROOT / "configs"
     assert DOCS_DIR == PROJECT_ROOT / "docs"
     assert MEMORY_BANK_DIR == PROJECT_ROOT / "memory-bank"

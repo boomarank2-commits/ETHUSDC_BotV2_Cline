@@ -21,6 +21,7 @@ from src.reports.backtest_summary import (
     load_backtest_summary,
     save_backtest_summary,
 )
+from src.router.cluster_router_report import ClusterRouterReport, save_cluster_router_report
 
 
 def _data_report(run_id: str, usable: bool = True) -> DataPreparationReport:
@@ -137,6 +138,43 @@ def _strategy_v1_report(run_id: str) -> StrategyV1TrainingBlindtestReport:
     )
 
 
+def _cluster_router_report(run_id: str) -> ClusterRouterReport:
+    return ClusterRouterReport(
+        run_id=run_id,
+        symbol="ETHUSDC",
+        quote_asset="USDC",
+        start_capital_reference=100.0,
+        stake_quote_amount=100.0,
+        training_start="2026-01-01T00:00:00",
+        training_end="2026-01-01T00:02:00",
+        blindtest_start="2026-01-01T00:03:00",
+        blindtest_end="2026-01-01T00:04:00",
+        opportunity_event_count=10,
+        situation_cluster_count=2,
+        tested_cluster_count=2,
+        learned_setup_count=1,
+        adoption_allowed_setup_count=1,
+        trade_allowed_setup_count=1,
+        router_frozen=True,
+        router_setup_count=1,
+        router_trade_signals=3,
+        blindtest_used_frozen_router=True,
+        blindtest_trade_count=2,
+        blindtest_total_net_pnl=33.0,
+        blindtest_quote_per_day=2.0,
+        blindtest_gross_pnl=34.0,
+        blindtest_fees=1.0,
+        blindtest_no_trade_count=100,
+        blindtest_blocked_signal_count=0,
+        final_capital_reference=133.0,
+        positive_days=3,
+        negative_days=1,
+        best_day_pnl=4.0,
+        worst_day_pnl=-1.0,
+        selected_setups=[{"training_quote_per_day": 2.5}],
+    )
+
+
 def test_completed_summary_is_built_from_reports() -> None:
     run_id = "run_20260612_210001"
     _save_completed_reports(run_id)
@@ -185,6 +223,66 @@ def test_summary_prefers_strategy_v1_over_v0_and_buy_hold() -> None:
     assert summary.message == "Strategy V1 training+blindtest completed"
     assert summary.selected_family == "momentum_breakout"
     assert summary.best_day_pnl == 5.0
+
+
+def test_summary_prefers_cluster_router_over_strategy_v1() -> None:
+    run_id = "run_20260612_210009"
+    _save_completed_reports(run_id)
+    save_strategy_v1_report(_strategy_v1_report(run_id))
+    save_cluster_router_report(_cluster_router_report(run_id))
+
+    summary = build_backtest_summary(run_id)
+
+    assert summary.final_capital == 133.0
+    assert summary.total_pnl == 33.0
+    assert summary.trade_count == 2
+    assert summary.quote_per_day == 2.0
+    assert summary.message == "Cluster Router training+blindtest completed"
+    assert summary.selected_family == "cluster_router"
+    assert summary.candidate_space_status == "router_built_blindtest_positive"
+    assert summary.target_feasibility_status == "target_math_not_reachable_current_activity"
+    assert summary.target_min_training_ratio == 2.0 / 3.0
+    assert summary.positive_days == 3
+    assert summary.negative_days == 1
+    assert summary.best_day_pnl == 4.0
+    assert summary.worst_day_pnl == -1.0
+
+
+def test_cluster_router_optimizer_search_space_failed_reaches_summary() -> None:
+    run_id = "run_20260612_210010"
+    _save_completed_reports(run_id)
+    report = _cluster_router_report(run_id)
+    report = ClusterRouterReport(
+        **{
+            **report.__dict__,
+            "learned_setup_count": 0,
+            "adoption_allowed_setup_count": 0,
+            "trade_allowed_setup_count": 0,
+            "router_frozen": False,
+            "router_setup_count": 0,
+            "blindtest_used_frozen_router": False,
+            "blindtest_trade_count": 0,
+            "blindtest_total_net_pnl": 0.0,
+            "blindtest_quote_per_day": 0.0,
+            "blindtest_gross_pnl": 0.0,
+            "blindtest_fees": 0.0,
+            "final_capital_reference": 100.0,
+            "selected_setups": [],
+            "rejection_summary": {
+                "optimizer_status": "optimizer_search_space_failed",
+                "best_target_candidate": {"training_quote_per_day": 0.0623, "expected_usdc_per_day": 0.0623},
+                "best_activity_candidate": {"training_quote_per_day": -5.0, "expected_usdc_per_day": -5.0},
+                "best_fee_survivor_candidate": {"training_quote_per_day": 0.04, "expected_usdc_per_day": 0.04},
+            },
+        }
+    )
+    save_cluster_router_report(report)
+
+    summary = build_backtest_summary(run_id)
+
+    assert summary.candidate_space_status == "optimizer_search_space_failed"
+    assert summary.target_feasibility_status == "optimizer_search_space_failed"
+    assert summary.best_training_quote_per_day == 0.0623
 
 
 def test_windows_come_from_train_blind_split_report() -> None:

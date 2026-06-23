@@ -86,7 +86,7 @@ def test_wrong_symbol_on_load_is_rejected(tmp_path: Path) -> None:
     save_candle_dataset_to_csv(_dataset(), csv_path)
 
     with pytest.raises(ValueError):
-        load_candle_dataset_from_csv(csv_path, symbol="BTCUSDC")
+        load_candle_dataset_from_csv(csv_path, symbol="XRPUSDC")
 
 
 def test_wrong_interval_on_load_is_rejected(tmp_path: Path) -> None:
