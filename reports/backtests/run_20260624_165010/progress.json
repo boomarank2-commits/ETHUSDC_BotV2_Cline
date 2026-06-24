@@ -1,0 +1,10 @@
+{
+  "error": null,
+  "estimated_remaining_seconds": null,
+  "message": null,
+  "progress_pct": 100.0,
+  "run_id": "run_20260624_165010",
+  "runtime_seconds": 219.7035071849823,
+  "stage": "completed",
+  "status": "completed"
+}
