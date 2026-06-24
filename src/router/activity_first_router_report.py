@@ -3,6 +3,11 @@
 This router is intentionally separate from the legacy cluster router. It first creates
 many active entry candidates, measures their activity, and only then evaluates edge
 after fees, drawdown and target distance.
+
+Important safety rule:
+Best diagnostic candidates may be reported even when they fail training, but only a
+training-approved candidate may be executed on the blindtest window as the selected
+strategy result.
 """
 
 import json
@@ -354,6 +359,30 @@ def _run_candidate_on_candles(
     )
 
 
+def _empty_simulation_result(
+    candidate: ActivityFirstCandidate,
+    start_capital_reference: float = 100.0,
+) -> ActivityFirstSimulationResult:
+    return ActivityFirstSimulationResult(
+        candidate=candidate,
+        start_capital_reference=start_capital_reference,
+        final_capital_reference=start_capital_reference,
+        total_gross_pnl=0.0,
+        total_fees=0.0,
+        total_net_pnl=0.0,
+        quote_per_day=0.0,
+        trade_count=0,
+        trades_per_day=0.0,
+        winning_trades=0,
+        losing_trades=0,
+        neutral_trades=0,
+        max_drawdown=0.0,
+        signal_count=0,
+        no_trade_count=0,
+        trades=[],
+    )
+
+
 def _daily_pnls(trades: list[ActivityFirstTrade]) -> dict[str, float]:
     daily: dict[str, float] = {}
     for trade in trades:
@@ -476,6 +505,20 @@ def _candidate_space_status(evaluations: list[_TrainingEvaluation]) -> tuple[str
     return "no_active_candidates", "no candidate produced training trades"
 
 
+def _diagnostic_placeholder_candidate(stake_quote_amount: float) -> ActivityFirstCandidate:
+    return ActivityFirstCandidate(
+        candidate_id="no_trade_allowed_candidate",
+        family="activity_first_router",
+        lookback_candles=5,
+        entry_threshold_pct=0.0,
+        take_profit_pct=0.0,
+        stop_loss_pct=0.0,
+        max_hold_candles=0,
+        cooldown_candles=0,
+        stake_quote_amount=stake_quote_amount,
+    )
+
+
 def build_activity_first_router_report(
     run_id: str,
     split: TrainBlindSplit,
@@ -495,30 +538,22 @@ def build_activity_first_router_report(
     fee_survivors = [item for item in evaluations if item.result.total_net_pnl > 0]
     best_fee_survivor = max(fee_survivors, key=lambda item: item.result.quote_per_day, default=None)
     best_target = min(evaluations, key=lambda item: item.target_distance, default=None)
-    selected = max(
-        allowed,
-        key=lambda item: item.balanced_score,
-        default=best_balanced,
-    )
+    selected = max(allowed, key=lambda item: item.balanced_score, default=None)
+    status, reason = _candidate_space_status(evaluations)
+
     if selected is None:
-        fallback_candidate = ActivityFirstCandidate(
-            candidate_id="no_candidate_available",
-            family="activity_first_router",
-            lookback_candles=5,
-            entry_threshold_pct=0.001,
-            take_profit_pct=0.004,
-            stop_loss_pct=0.003,
-            max_hold_candles=60,
-            cooldown_candles=1,
-            stake_quote_amount=stake_quote_amount,
-        )
-        selected_result = _run_candidate_on_candles(split.blindtest_candles, fallback_candidate)
+        selected_result = _empty_simulation_result(_diagnostic_placeholder_candidate(stake_quote_amount))
         selected_setups: list[dict[str, Any]] = []
+        selection_reason = (
+            "diagnostic_only_no_trade_allowed_candidate; best candidates are reported "
+            "but not executed on blindtest as selected strategy"
+        )
     else:
         selected_result = _run_candidate_on_candles(split.blindtest_candles, selected.candidate)
         selected_setups = [_candidate_summary(selected)]
+        selection_reason = "trade_allowed_candidate_executed_on_blindtest"
+
     daily = _daily_pnls(selected_result.trades)
-    status, reason = _candidate_space_status(evaluations)
     best_training_quote_per_day = max(
         (item.result.quote_per_day for item in evaluations),
         default=0.0,
@@ -526,7 +561,7 @@ def build_activity_first_router_report(
     target_ratio = selected_result.quote_per_day / TARGET_QUOTE_PER_DAY
     target_status = (
         "blindtest_target_reached"
-        if selected_result.quote_per_day >= TARGET_QUOTE_PER_DAY
+        if selected is not None and selected_result.quote_per_day >= TARGET_QUOTE_PER_DAY
         else "target_not_reached"
     )
     rejection_summary = {
@@ -541,8 +576,11 @@ def build_activity_first_router_report(
             _candidate_summary(best_fee_survivor) if best_fee_survivor else None
         ),
         "best_target_candidate": _candidate_summary(best_target) if best_target else None,
+        "selected_trade_allowed_candidate": _candidate_summary(selected) if selected else None,
         "target_feasibility_status": target_status,
         "best_training_quote_per_day": best_training_quote_per_day,
+        "diagnostic_only": selected is None,
+        "selection_reason": selection_reason,
     }
     return ActivityFirstRouterReport(
         run_id=run_id,
@@ -597,6 +635,11 @@ def build_activity_first_router_report(
             "smoke_test_not_performance_proof": False,
             "live_release_allowed": False,
             "legacy_cluster_router_used": False,
+            "diagnostic_only": selected is None,
+            "trade_allowed": selected is not None,
+            "blindtest_strategy_executed": selected is not None,
+            "selection_policy": "only_trade_allowed_candidates_may_run_blindtest",
+            "selection_reason": selection_reason,
         },
         blindtest_trades=[_trade_to_dict(trade) for trade in selected_result.trades[:250]],
     )
