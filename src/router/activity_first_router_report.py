@@ -1,7 +1,9 @@
 import json
+from array import array
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.common.config import CONFIG
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
@@ -133,6 +135,95 @@ class _TrainingEvaluation:
     rejection_reason: str | None
     balanced_score: float
     target_distance: float
+
+
+@dataclass(frozen=True)
+class _LookbackMetrics:
+    recent_high: array
+    recent_low: array
+    max_close: array
+    mean_close: array
+    avg_volume: array
+    avg_range: array
+
+
+class _MarketMetrics:
+    """Cached rolling ETHUSDC market context for one candle set.
+
+    The first activity-first version recomputed every lookback window for every
+    candidate and every minute. That made 14/30 day smoke windows look frozen.
+    This cache computes each active lookback once and then uses O(1) reads.
+    """
+
+    def __init__(self, candles: list[Candle]) -> None:
+        self.candles = candles
+        self.close = array("d", (c.close for c in candles))
+        self.high = array("d", (c.high for c in candles))
+        self.low = array("d", (c.low for c in candles))
+        self.volume = array("d", (c.volume for c in candles))
+        self.range_pct = array("d", (((c.high - c.low) / c.close) if c.close > 0 else 0.0 for c in candles))
+        self.sessions = [_session_label(c.open_time) for c in candles]
+        self._close_prefix = self._prefix(self.close)
+        self._volume_prefix = self._prefix(self.volume)
+        self._range_prefix = self._prefix(self.range_pct)
+        self._cached_lookback: int | None = None
+        self._cached_metrics: _LookbackMetrics | None = None
+
+    @staticmethod
+    def _prefix(values: array) -> array:
+        prefix = array("d", [0.0])
+        total = 0.0
+        for value in values:
+            total += float(value)
+            prefix.append(total)
+        return prefix
+
+    @staticmethod
+    def _rolling_extreme(values: array, lookback: int, want_max: bool) -> array:
+        result = array("d")
+        q: deque[int] = deque()
+        for index in range(len(values)):
+            add_index = index - 1
+            if add_index >= 0:
+                if want_max:
+                    while q and values[q[-1]] <= values[add_index]:
+                        q.pop()
+                else:
+                    while q and values[q[-1]] >= values[add_index]:
+                        q.pop()
+                q.append(add_index)
+            first_allowed = index - lookback
+            while q and q[0] < first_allowed:
+                q.popleft()
+            result.append(float(values[q[0]] if q else values[index]))
+        return result
+
+    @staticmethod
+    def _rolling_average(prefix: array, lookback: int) -> array:
+        result = array("d")
+        for index in range(len(prefix) - 1):
+            start = max(0, index - lookback)
+            length = max(1, index - start)
+            result.append(float((prefix[index] - prefix[start]) / length))
+        return result
+
+    def for_lookback(self, lookback: int) -> _LookbackMetrics:
+        if self._cached_lookback == lookback and self._cached_metrics is not None:
+            return self._cached_metrics
+        metrics = _LookbackMetrics(
+            recent_high=self._rolling_extreme(self.high, lookback, True),
+            recent_low=self._rolling_extreme(self.low, lookback, False),
+            max_close=self._rolling_extreme(self.close, lookback, True),
+            mean_close=self._rolling_average(self._close_prefix, lookback),
+            avg_volume=self._rolling_average(self._volume_prefix, lookback),
+            avg_range=self._rolling_average(self._range_prefix, lookback),
+        )
+        self._cached_lookback = lookback
+        self._cached_metrics = metrics
+        return metrics
+
+
+ProgressCallback = Callable[[dict], None]
 
 
 def _get_activity_first_router_report_path(run_id: str) -> Path:
@@ -285,9 +376,26 @@ def _session_label(open_time: str) -> str:
     return "late_us_afterhours_window"
 
 
-def _eth_context(candles: list[Candle], index: int, lookback: int) -> dict[str, Any]:
+def _eth_context(candles: list[Candle], index: int, lookback: int, market: _MarketMetrics | None = None) -> dict[str, Any]:
     current = candles[index]
     prior = candles[index - 1]
+    if market is not None:
+        metrics = market.for_lookback(lookback)
+        avg_volume = metrics.avg_volume[index]
+        avg_range = metrics.avg_range[index]
+        current_range = market.range_pct[index]
+        close_pos = 0.5 if current.high == current.low else (current.close - current.low) / (current.high - current.low)
+        return {
+            "session": market.sessions[index],
+            "close_pos": close_pos,
+            "volume_ratio": current.volume / avg_volume if avg_volume > 0 else 1.0,
+            "range_ratio": current_range / avg_range if avg_range > 0 else 1.0,
+            "lookback_return": (current.close / candles[index - lookback].close - 1.0) if candles[index - lookback].close > 0 else 0.0,
+            "short_return": (current.close / candles[index - max(2, lookback // 3)].close - 1.0) if candles[index - max(2, lookback // 3)].close > 0 else 0.0,
+            "recent_high": metrics.recent_high[index],
+            "recent_low": metrics.recent_low[index],
+            "prior_close": prior.close,
+        }
     window = candles[index - lookback : index]
     closes = [c.close for c in window]
     volumes = [c.volume for c in window]
@@ -310,26 +418,33 @@ def _eth_context(candles: list[Candle], index: int, lookback: int) -> dict[str, 
     }
 
 
-def _entry_signal(candles: list[Candle], index: int, candidate: ActivityFirstCandidate) -> bool:
+def _entry_signal(candles: list[Candle], index: int, candidate: ActivityFirstCandidate, market: _MarketMetrics | None = None) -> bool:
     current = candles[index]
     prior = candles[index - 1]
     lookback = candidate.lookback_candles
     previous = candles[index - lookback]
     threshold = candidate.entry_threshold_pct
-    window = candles[index - lookback : index]
-    closes = [c.close for c in window]
-    recent_high = max(c.high for c in window)
-    recent_low = min(c.low for c in window)
-    recent_range = (recent_high - recent_low) / current.close
-    mean_close = sum(closes) / len(closes)
+    if market is not None:
+        metrics = market.for_lookback(lookback)
+        recent_high = metrics.recent_high[index]
+        recent_low = metrics.recent_low[index]
+        max_close = metrics.max_close[index]
+        mean_close = metrics.mean_close[index]
+    else:
+        window = candles[index - lookback : index]
+        closes = [c.close for c in window]
+        recent_high = max(c.high for c in window)
+        recent_low = min(c.low for c in window)
+        max_close = max(closes)
+        mean_close = sum(closes) / len(closes)
+    recent_range = (recent_high - recent_low) / current.close if current.close > 0 else 0.0
     short_index = index - max(2, lookback // 2)
-    context = _eth_context(candles, index, lookback)
 
     if candidate.family == "momentum_entry":
         return current.close > previous.close * (1 + threshold) and current.close > prior.close
     if candidate.family == "pullback_entry":
         trend_ok = mean_close > previous.close * (1 + threshold / 2)
-        pullback_seen = prior.close < max(closes) * (1 - threshold)
+        pullback_seen = prior.close < max_close * (1 - threshold)
         rebound_ok = current.close > prior.close * (1 + threshold / 3)
         return trend_ok and pullback_seen and rebound_ok
     if candidate.family == "range_breakout_entry":
@@ -345,6 +460,7 @@ def _entry_signal(candles: list[Candle], index: int, candidate: ActivityFirstCan
         long_trend = current.close > previous.close * (1 + threshold)
         return short_trend and long_trend and current.close > prior.close
 
+    context = _eth_context(candles, index, lookback, market)
     is_us_window = context["session"] in {"us_macro_open_window", "us_session_window"}
     volume_spike = context["volume_ratio"] >= 1.25
     range_spike = context["range_ratio"] >= 1.20
@@ -398,7 +514,7 @@ def _quantity_for_entry(candidate: ActivityFirstCandidate, entry_price: float, f
     return quantity if quantity > 0 else None
 
 
-def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCandidate, start_capital_reference: float, filters: ExchangeInfoFilters | None) -> ActivityFirstSimulationResult:
+def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCandidate, start_capital_reference: float, filters: ExchangeInfoFilters | None, market: _MarketMetrics | None = None) -> ActivityFirstSimulationResult:
     trades: list[ActivityFirstTrade] = []
     signal_count = no_trade_count = blocked_signal_count = 0
     cumulative_net = cumulative_gross = cumulative_fees = 0.0
@@ -407,7 +523,7 @@ def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCan
     fee_rate = FEE_BPS / 10_000
     index = max(candidate.lookback_candles, 2)
     while index < len(candles) - 1:
-        if not _entry_signal(candles, index, candidate):
+        if not _entry_signal(candles, index, candidate, market):
             no_trade_count += 1
             index += 1
             continue
@@ -491,14 +607,14 @@ def _forward_return(candles: list[Candle], index: int, minutes: int) -> float | 
     return candles[target].close / candles[index].close - 1.0
 
 
-def _trigger_diagnostics(candles: list[Candle], trigger_name: str, lookback: int = 60) -> dict[str, Any]:
+def _trigger_diagnostics(candles: list[Candle], trigger_name: str, lookback: int = 60, market: _MarketMetrics | None = None) -> dict[str, Any]:
     returns_60: list[float] = []
     returns_240: list[float] = []
     session_counts: dict[str, int] = {}
     max_index = len(candles) - 241
+    diagnostic_candidate = ActivityFirstCandidate("diagnostic", trigger_name, lookback, 0.0025, 0.0, 0.0, 0, 0, 100.0, "diagnostic")
     for index in range(max(lookback, 2), max_index):
-        candidate = ActivityFirstCandidate("diagnostic", trigger_name, lookback, 0.0025, 0.0, 0.0, 0, 0, 100.0, "diagnostic")
-        if not _entry_signal(candles, index, candidate):
+        if not _entry_signal(candles, index, diagnostic_candidate, market):
             continue
         session = _session_label(candles[index].open_time)
         session_counts[session] = session_counts.get(session, 0) + 1
@@ -508,6 +624,7 @@ def _trigger_diagnostics(candles: list[Candle], trigger_name: str, lookback: int
             returns_60.append(r60)
         if r240 is not None:
             returns_240.append(r240)
+
     def _summary(values: list[float]) -> dict[str, float | int | None]:
         if not values:
             return {"count": 0, "avg_return_pct": None, "best_return_pct": None, "worst_return_pct": None, "positive_rate": None}
@@ -527,12 +644,13 @@ def _trigger_diagnostics(candles: list[Candle], trigger_name: str, lookback: int
     }
 
 
-def _eth_regime_diagnostics(candles: list[Candle]) -> dict[str, Any]:
+def _eth_regime_diagnostics(candles: list[Candle], market: _MarketMetrics | None = None) -> dict[str, Any]:
+    market = market or _MarketMetrics(candles)
     session_counts: dict[str, int] = {}
     range_spike_count = 0
     volume_spike_count = 0
     for index in range(60, len(candles)):
-        context = _eth_context(candles, index, 60)
+        context = _eth_context(candles, index, 60, market)
         session = str(context["session"])
         session_counts[session] = session_counts.get(session, 0) + 1
         if context["range_ratio"] >= 1.5:
@@ -553,7 +671,7 @@ def _eth_regime_diagnostics(candles: list[Candle]) -> dict[str, Any]:
         "session_counts": session_counts,
         "range_spike_minutes": range_spike_count,
         "volume_spike_minutes": volume_spike_count,
-        "trigger_forward_return_diagnostics": [_trigger_diagnostics(candles, name) for name in trigger_names],
+        "trigger_forward_return_diagnostics": [_trigger_diagnostics(candles, name, market=market) for name in trigger_names],
         "missing_live_context": ["historical orderbook depth", "historical bookTicker spread", "news/economic-calendar labels"],
         "interpretation_rule": "These diagnostics may guide candidate generation, but they do not by themselves allow live trading or blindtest execution.",
     }
@@ -594,16 +712,33 @@ def _candidate_summary(evaluation: _TrainingEvaluation) -> dict[str, Any]:
     }
 
 
-def _evaluate_training_candidates(candidates: list[ActivityFirstCandidate], candles: list[Candle], start_capital_reference: float, filters: ExchangeInfoFilters | None) -> list[_TrainingEvaluation]:
+def _emit_router_progress(progress_callback: ProgressCallback | None, done: int, total: int) -> None:
+    if progress_callback is None or total <= 0 or done % 25 != 0:
+        return
+    pct = 84.0 + min(4.4, done / total * 4.4)
+    progress_callback(
+        {
+            "phase": "activity_first_router",
+            "progress_pct": pct,
+            "detail": f"Activity-First Router prüft Kandidaten {done}/{total}",
+        }
+    )
+
+
+def _evaluate_training_candidates(candidates: list[ActivityFirstCandidate], candles: list[Candle], start_capital_reference: float, filters: ExchangeInfoFilters | None, progress_callback: ProgressCallback | None = None) -> list[_TrainingEvaluation]:
     evaluations: list[_TrainingEvaluation] = []
-    for candidate in candidates:
-        result = _run_candidate_on_candles(candles, candidate, start_capital_reference, filters)
+    market = _MarketMetrics(candles)
+    ordered_candidates = sorted(candidates, key=lambda candidate: (candidate.lookback_candles, candidate.search_pass, candidate.family, candidate.candidate_id))
+    total = len(ordered_candidates)
+    for done, candidate in enumerate(ordered_candidates, start=1):
+        result = _run_candidate_on_candles(candles, candidate, start_capital_reference, filters, market)
         rejection = _candidate_rejection(result)
         activity = _activity_class(result.trades_per_day)
         target_distance = abs(TARGET_QUOTE_PER_DAY - result.quote_per_day)
         pf = _profit_factor(result.trades) or 0.0
         score = result.quote_per_day + min(result.trades_per_day, 6.0) * 0.05 + min(pf, 2.0) * 0.03 - result.max_drawdown * 0.01 - target_distance * 0.03
         evaluations.append(_TrainingEvaluation(candidate, result, activity, rejection is None, rejection, score, target_distance))
+        _emit_router_progress(progress_callback, done, total)
     return evaluations
 
 
@@ -645,13 +780,13 @@ def _diagnostic_placeholder_candidate(stake: float) -> ActivityFirstCandidate:
     return ActivityFirstCandidate("no_trade_allowed_candidate", "activity_first_router", 5, 0.0, 0.0, 0.0, 0, 0, stake, "diagnostic_only")
 
 
-def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stake_quote_amount: float = 100.0, profile: str = "normal") -> ActivityFirstRouterReport:
+def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stake_quote_amount: float = 100.0, profile: str = "normal", progress_callback: ProgressCallback | None = None) -> ActivityFirstRouterReport:
     if split.symbol != CONFIG.symbol:
         raise ValueError(f"symbol must be {CONFIG.symbol}")
     start_capital = float(stake_quote_amount)
     filters = load_exchange_info_filters()
     candidates = _generate_activity_first_candidates(stake_quote_amount, profile)
-    evaluations = _evaluate_training_candidates(candidates, split.training_candles, start_capital, filters)
+    evaluations = _evaluate_training_candidates(candidates, split.training_candles, start_capital, filters, progress_callback)
     allowed = [e for e in evaluations if e.trade_allowed]
     best_activity = max(evaluations, key=lambda e: e.result.trades_per_day, default=None)
     best_edge = max(evaluations, key=lambda e: e.result.quote_per_day, default=None)
@@ -666,13 +801,16 @@ def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stak
         selected_setups = []
         selection_reason = "diagnostic_only_no_trade_allowed_candidate; best candidates are reported but not executed on blindtest as selected strategy"
     else:
-        selected_result = _run_candidate_on_candles(split.blindtest_candles, selected.candidate, start_capital, filters)
+        blindtest_market = _MarketMetrics(split.blindtest_candles)
+        selected_result = _run_candidate_on_candles(split.blindtest_candles, selected.candidate, start_capital, filters, blindtest_market)
         selected_setups = [_candidate_summary(selected)]
         selection_reason = "trade_allowed_candidate_executed_on_blindtest"
     daily = _daily_pnls(selected_result.trades)
     best_training_quote_per_day = max((e.result.quote_per_day for e in evaluations), default=0.0)
     target_ratio = selected_result.quote_per_day / TARGET_QUOTE_PER_DAY
     target_status = "blindtest_target_reached" if selected is not None and selected_result.quote_per_day >= TARGET_QUOTE_PER_DAY else "target_not_reached"
+    if progress_callback is not None:
+        progress_callback({"phase": "activity_first_router_diagnostics", "progress_pct": 88.7, "detail": "ETHUSDC-Regime-Diagnose wird erstellt"})
     eth_diagnostics = _eth_regime_diagnostics(split.training_candles)
     rejection_summary = {
         "router_name": "activity_first_router",
@@ -749,10 +887,11 @@ def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stak
             "selection_policy": "only_trade_allowed_candidates_may_run_blindtest",
             "selection_reason": selection_reason,
             "exchange_info_filters_used": filters is not None,
-            "candidate_generation_version": "activity_first_v3_eth_regime_discovery",
+            "candidate_generation_version": "activity_first_v4_fast_eth_regime_discovery",
             "eth_specific_strategy_scope": True,
             "historical_news_labels_used": False,
             "historical_orderbook_used": False,
+            "fast_rolling_metrics_used": True,
         },
         [asdict(t) for t in selected_result.trades[:250]],
     )
