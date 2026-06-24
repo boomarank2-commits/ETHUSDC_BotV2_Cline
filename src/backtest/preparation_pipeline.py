@@ -1,6 +1,7 @@
 """Technical preparation pipeline for future backtest runs."""
 
 from dataclasses import dataclass
+from threading import Event, Thread
 from time import time
 from typing import Callable
 
@@ -102,6 +103,44 @@ def _emit_progress(
             **extra,
         }
     )
+
+
+def _start_heartbeat_progress(
+    run_id: str,
+    progress_callback: Callable[[dict], None] | None,
+    started_at: float,
+    stage: str,
+    base_pct: float,
+    max_pct: float,
+    detail: str,
+) -> Event:
+    """Keep long UI stages visibly alive without changing the backtest path."""
+    stop_event = Event()
+
+    def _heartbeat() -> None:
+        tick = 0
+        while not stop_event.wait(10.0):
+            tick += 1
+            pct = min(max_pct, base_pct + tick * 0.25)
+            message = f"{detail} - läuft weiter; längere Smoke-Dauer braucht entsprechend länger"
+            _save_progress(
+                run_id,
+                "running",
+                stage,
+                pct,
+                message=message,
+                started_at=started_at,
+            )
+            _emit_progress(
+                progress_callback,
+                stage,
+                pct,
+                message,
+                run_id=run_id,
+            )
+
+    Thread(target=_heartbeat, daemon=True).start()
+    return stop_event
 
 
 def run_backtest_preparation_pipeline(
@@ -256,21 +295,34 @@ def run_backtest_preparation_pipeline(
             "running",
             "activity_first_router",
             84.0,
+            message="Activity-First Router läuft; bei 14/30-Tage-Smoke kann dieser Schritt länger dauern",
             started_at=started_at,
         )
         _emit_progress(
             progress_callback,
             "activity_first_router_started",
             84.0,
-            "Activity-First Router läuft",
+            "Activity-First Router läuft; bei 14/30-Tage-Smoke kann dieser Schritt länger dauern",
             run_id=run_id,
         )
-        activity_first_router_report = build_activity_first_router_report(
+        heartbeat_stop = _start_heartbeat_progress(
             run_id,
-            split,
-            stake_quote_amount=stake_quote_amount,
-            profile=profile,
+            progress_callback,
+            started_at,
+            "activity_first_router",
+            84.0,
+            88.5,
+            "Activity-First Router prüft ETHUSDC-Kandidaten",
         )
+        try:
+            activity_first_router_report = build_activity_first_router_report(
+                run_id,
+                split,
+                stake_quote_amount=stake_quote_amount,
+                profile=profile,
+            )
+        finally:
+            heartbeat_stop.set()
         activity_first_router_report.router_artifact["run_type"] = run_type
         activity_first_router_report.router_artifact["smoke_test_not_performance_proof"] = (
             run_type == "smoke_test"
