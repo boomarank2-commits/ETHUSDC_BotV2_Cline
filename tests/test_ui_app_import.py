@@ -61,28 +61,34 @@ def test_ui_contains_progress_status_fields() -> None:
     assert "Candles:" in source
 
 
-def test_ui_loads_active_run_and_shows_data_status_fields() -> None:
+def test_ui_loads_active_run_and_shows_concise_data_quality_fields() -> None:
     source = inspect.getsource(app_module)
 
     assert "load_active_backtest_result_for_ui" in source
     assert "Letzten Lauf laden" in source
-    assert "Datenart:" in source
-    assert "Datenstatus:" in source
-    assert "Datenalter:" in source
+    assert "DATENQUALITÄT" in source
+    assert "ETHUSDC Candles:" in source
+    assert "Datenbereiche:" in source
 
 
-def test_ui_result_section_is_not_mislabeled_as_buy_hold() -> None:
+def test_ui_result_section_is_decision_oriented_and_not_buy_hold() -> None:
     source = inspect.getsource(app_module)
 
-    assert "Backtest-Ergebnis (aktuell bevorzugter Report)" in source
+    assert "BACKTEST-ENTSCHEIDUNG" in source
+    assert "KERNERGEBNIS" in source
+    assert "STABILITÄT" in source
+    assert "STRATEGIE-FREIGABE" in source
     assert "D) Buy-&-Hold Benchmark" not in source
 
 
-def test_ui_contains_clean_button_and_double_warning() -> None:
+def test_ui_result_section_keeps_only_decision_metrics() -> None:
     source = inspect.getsource(app_module)
 
-    assert "Alle Daten löschen / Bot clean machen" in source
-    assert "Achtung: Hiermit werden alle heruntergeladenen Markt-/Backtestdaten" in source
-    assert "Sind Sie 100% sicher?" in source
-    assert source.count("messagebox.askyesno") >= 2
-    assert "Clean-Zustand: Beim nächsten Backtest werden Daten neu geladen." in source or "result.message" in source
+    assert "Gewinn/Tag:" in source
+    assert "Trades:" in source
+    assert "Bester Monat:" in source
+    assert "Schlechtester Monat:" in source
+    assert "NICHT ÜBERNEHMEN" in source
+    assert "ZIEL ERREICHT" in source
+    assert "Datenart:" not in source
+    assert "Datenstatus:" not in source
