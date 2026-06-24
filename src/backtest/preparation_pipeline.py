@@ -320,6 +320,7 @@ def run_backtest_preparation_pipeline(
                 split,
                 stake_quote_amount=stake_quote_amount,
                 profile=profile,
+                progress_callback=progress_callback,
             )
         finally:
             heartbeat_stop.set()
