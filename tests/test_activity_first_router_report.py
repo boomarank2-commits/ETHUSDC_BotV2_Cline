@@ -111,7 +111,7 @@ def test_eth_specific_regime_diagnostics_are_reported() -> None:
     pass_names = {row["pass_name"] for row in report.rejection_summary["search_pass_summary"]}
 
     assert report.router_artifact["eth_specific_strategy_scope"] is True
-    assert report.router_artifact["candidate_generation_version"] == "activity_first_v4_fast_eth_regime_discovery"
+    assert report.router_artifact["candidate_generation_version"] == "activity_first_v6_multi_candidate_pool"
     assert "eth_regime_discovery" in pass_names
     assert diagnostics["scope"] == "ETHUSDC-only training diagnostics"
     assert diagnostics["trigger_forward_return_diagnostics"]
