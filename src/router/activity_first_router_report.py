@@ -16,6 +16,7 @@ MIN_PROFIT_FACTOR = 1.03
 MAX_FEE_TO_GROSS_RATIO = 0.70
 MAX_DRAWDOWN_PCT = 25.0
 
+
 @dataclass(frozen=True)
 class ActivityFirstCandidate:
     candidate_id: str
@@ -28,6 +29,7 @@ class ActivityFirstCandidate:
     cooldown_candles: int
     stake_quote_amount: float
     search_pass: str = "activity_first"
+
 
 @dataclass(frozen=True)
 class ActivityFirstTrade:
@@ -45,6 +47,7 @@ class ActivityFirstTrade:
     family: str
     candidate_id: str
     hold_minutes: int = 0
+
 
 @dataclass(frozen=True)
 class ActivityFirstSimulationResult:
@@ -65,6 +68,7 @@ class ActivityFirstSimulationResult:
     no_trade_count: int
     blocked_signal_count: int
     trades: list[ActivityFirstTrade]
+
 
 @dataclass(frozen=True)
 class ActivityFirstRouterReport:
@@ -115,8 +119,10 @@ class ActivityFirstRouterReport:
     target_feasibility_status: str
     router_artifact: dict[str, Any] = field(default_factory=dict)
     blindtest_trades: list[dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         get_run_report_dir(self.run_id)
+
 
 @dataclass(frozen=True)
 class _TrainingEvaluation:
@@ -128,8 +134,10 @@ class _TrainingEvaluation:
     balanced_score: float
     target_distance: float
 
+
 def _get_activity_first_router_report_path(run_id: str) -> Path:
     return get_run_report_dir(run_id) / ACTIVITY_FIRST_ROUTER_REPORT_FILENAME
+
 
 def _activity_class(trades_per_day: float) -> str:
     if trades_per_day < 0.5:
@@ -144,6 +152,7 @@ def _activity_class(trades_per_day: float) -> str:
         return "high_activity"
     return "overactive"
 
+
 def _profit_factor(trades: list[ActivityFirstTrade]) -> float | None:
     wins = sum(t.net_pnl for t in trades if t.net_pnl > 0)
     losses = abs(sum(t.net_pnl for t in trades if t.net_pnl < 0))
@@ -151,10 +160,12 @@ def _profit_factor(trades: list[ActivityFirstTrade]) -> float | None:
         return None if wins == 0 else 999.0
     return wins / losses
 
+
 def _fee_to_gross_ratio(result: ActivityFirstSimulationResult) -> float | None:
     if abs(result.total_gross_pnl) < 0.000001:
         return None
     return result.total_fees / abs(result.total_gross_pnl)
+
 
 def _candidate_rejection(result: ActivityFirstSimulationResult) -> str | None:
     if result.trade_count == 0 or result.trades_per_day < 1.0:
@@ -175,6 +186,7 @@ def _candidate_rejection(result: ActivityFirstSimulationResult) -> str | None:
         return "rejected_by_drawdown"
     return None
 
+
 def _add_candidates(candidates, families, lookbacks, setups, stake, search_pass, cooldown_divisor):
     seen = {c.candidate_id for c in candidates}
     for family in families:
@@ -184,10 +196,31 @@ def _add_candidates(candidates, families, lookbacks, setups, stake, search_pass,
                 if cid in seen:
                     continue
                 seen.add(cid)
-                candidates.append(ActivityFirstCandidate(cid, family, lookback, threshold, tp, sl, hold, max(1, lookback // cooldown_divisor), stake, search_pass))
+                candidates.append(
+                    ActivityFirstCandidate(
+                        cid,
+                        family,
+                        lookback,
+                        threshold,
+                        tp,
+                        sl,
+                        hold,
+                        max(1, lookback // cooldown_divisor),
+                        stake,
+                        search_pass,
+                    )
+                )
+
 
 def _generate_activity_first_candidates(stake_quote_amount: float, profile: str) -> list[ActivityFirstCandidate]:
-    families = ("momentum_entry", "pullback_entry", "range_breakout_entry", "volatility_expansion_entry", "mean_reversion_entry", "trend_continuation_entry")
+    families = (
+        "momentum_entry",
+        "pullback_entry",
+        "range_breakout_entry",
+        "volatility_expansion_entry",
+        "mean_reversion_entry",
+        "trend_continuation_entry",
+    )
     candidates: list[ActivityFirstCandidate] = []
     if profile == "conservative":
         activity_lookbacks = (10, 20, 30, 60, 120)
@@ -210,7 +243,72 @@ def _generate_activity_first_candidates(stake_quote_amount: float, profile: str)
     fee_families = ("pullback_entry", "range_breakout_entry", "mean_reversion_entry", "trend_continuation_entry")
     fee_setups = ((0.004, 0.018, 0.008, 720), (0.006, 0.024, 0.010, 900))
     _add_candidates(candidates, fee_families, (30, 60, 120, 240), fee_setups, stake_quote_amount, "fee_rescue", 3)
+
+    eth_families = (
+        "eth_us_impulse_entry",
+        "eth_liquidity_sweep_reclaim_entry",
+        "eth_range_compression_breakout_entry",
+        "eth_bounce_after_flush_entry",
+        "eth_continuation_after_impulse_entry",
+        "eth_opening_range_reclaim_entry",
+    )
+    eth_setups = (
+        (0.0015, 0.006, 0.004, 90),
+        (0.0025, 0.010, 0.006, 180),
+        (0.0035, 0.014, 0.008, 360),
+        (0.0050, 0.020, 0.010, 720),
+        (0.0075, 0.030, 0.014, 1080),
+    )
+    _add_candidates(candidates, eth_families, (15, 30, 60, 120, 240), eth_setups, stake_quote_amount, "eth_regime_discovery", 3)
     return candidates
+
+
+def _utc_hour(open_time: str) -> int | None:
+    try:
+        return int(open_time[11:13])
+    except (TypeError, ValueError):
+        return None
+
+
+def _session_label(open_time: str) -> str:
+    hour = _utc_hour(open_time)
+    if hour is None:
+        return "unknown"
+    if 12 <= hour <= 15:
+        return "us_macro_open_window"
+    if 16 <= hour <= 21:
+        return "us_session_window"
+    if 7 <= hour <= 11:
+        return "europe_session_window"
+    if 0 <= hour <= 6:
+        return "asia_session_window"
+    return "late_us_afterhours_window"
+
+
+def _eth_context(candles: list[Candle], index: int, lookback: int) -> dict[str, Any]:
+    current = candles[index]
+    prior = candles[index - 1]
+    window = candles[index - lookback : index]
+    closes = [c.close for c in window]
+    volumes = [c.volume for c in window]
+    recent_high = max(c.high for c in window)
+    recent_low = min(c.low for c in window)
+    avg_volume = sum(volumes) / len(volumes) if volumes else 0.0
+    avg_range = sum((c.high - c.low) / c.close for c in window if c.close > 0) / len(window)
+    current_range = (current.high - current.low) / current.close if current.close > 0 else 0.0
+    close_pos = 0.5 if current.high == current.low else (current.close - current.low) / (current.high - current.low)
+    return {
+        "session": _session_label(current.open_time),
+        "close_pos": close_pos,
+        "volume_ratio": current.volume / avg_volume if avg_volume > 0 else 1.0,
+        "range_ratio": current_range / avg_range if avg_range > 0 else 1.0,
+        "lookback_return": (current.close / candles[index - lookback].close - 1.0) if candles[index - lookback].close > 0 else 0.0,
+        "short_return": (current.close / candles[index - max(2, lookback // 3)].close - 1.0) if candles[index - max(2, lookback // 3)].close > 0 else 0.0,
+        "recent_high": recent_high,
+        "recent_low": recent_low,
+        "prior_close": prior.close,
+    }
+
 
 def _entry_signal(candles: list[Candle], index: int, candidate: ActivityFirstCandidate) -> bool:
     current = candles[index]
@@ -225,6 +323,8 @@ def _entry_signal(candles: list[Candle], index: int, candidate: ActivityFirstCan
     recent_range = (recent_high - recent_low) / current.close
     mean_close = sum(closes) / len(closes)
     short_index = index - max(2, lookback // 2)
+    context = _eth_context(candles, index, lookback)
+
     if candidate.family == "momentum_entry":
         return current.close > previous.close * (1 + threshold) and current.close > prior.close
     if candidate.family == "pullback_entry":
@@ -244,7 +344,33 @@ def _entry_signal(candles: list[Candle], index: int, candidate: ActivityFirstCan
         short_trend = current.close > candles[short_index].close * (1 + threshold / 3)
         long_trend = current.close > previous.close * (1 + threshold)
         return short_trend and long_trend and current.close > prior.close
+
+    is_us_window = context["session"] in {"us_macro_open_window", "us_session_window"}
+    volume_spike = context["volume_ratio"] >= 1.25
+    range_spike = context["range_ratio"] >= 1.20
+    close_strong = context["close_pos"] >= 0.65
+    close_reclaim = current.close > prior.close * (1 + threshold / 3)
+    compression = recent_range <= max(0.0035, threshold * 2.5)
+    prior_flush = previous.close > 0 and (prior.close / previous.close - 1.0) <= -threshold * 2.0
+
+    if candidate.family == "eth_us_impulse_entry":
+        return is_us_window and volume_spike and range_spike and close_strong and current.close > prior.close * (1 + threshold / 2)
+    if candidate.family == "eth_liquidity_sweep_reclaim_entry":
+        swept_low = current.low < recent_low * (1 - threshold / 3)
+        reclaimed = current.close > recent_low * (1 + threshold / 2) and close_strong
+        return swept_low and reclaimed and volume_spike
+    if candidate.family == "eth_range_compression_breakout_entry":
+        return compression and current.close > recent_high * (1 + threshold / 3) and volume_spike and close_strong
+    if candidate.family == "eth_bounce_after_flush_entry":
+        return prior_flush and close_reclaim and close_strong and context["range_ratio"] >= 1.0
+    if candidate.family == "eth_continuation_after_impulse_entry":
+        impulse = context["lookback_return"] >= threshold * 2.0
+        shallow_pullback = prior.close >= mean_close * (1 - threshold)
+        return impulse and shallow_pullback and close_reclaim and close_strong
+    if candidate.family == "eth_opening_range_reclaim_entry":
+        return is_us_window and current.close > mean_close * (1 + threshold / 2) and close_reclaim and volume_spike
     raise ValueError(f"unsupported activity-first family: {candidate.family}")
+
 
 def _exit_trade(candles: list[Candle], entry_index: int, candidate: ActivityFirstCandidate, filters: ExchangeInfoFilters | None) -> tuple[int, str, float]:
     entry_price = candles[entry_index].close
@@ -260,6 +386,7 @@ def _exit_trade(candles: list[Candle], entry_index: int, candidate: ActivityFirs
             return exit_index, "take_profit", take_profit_price
     return max_exit_index, "max_hold", candles[max_exit_index].close
 
+
 def _quantity_for_entry(candidate: ActivityFirstCandidate, entry_price: float, filters: ExchangeInfoFilters | None) -> float | None:
     quantity = candidate.stake_quote_amount / entry_price
     if filters is not None:
@@ -269,6 +396,7 @@ def _quantity_for_entry(candidate: ActivityFirstCandidate, entry_price: float, f
         if filters.min_notional is not None and quantity * entry_price < filters.min_notional:
             return None
     return quantity if quantity > 0 else None
+
 
 def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCandidate, start_capital_reference: float, filters: ExchangeInfoFilters | None) -> ActivityFirstSimulationResult:
     trades: list[ActivityFirstTrade] = []
@@ -303,13 +431,50 @@ def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCan
         peak_reference = max(peak_reference, equity)
         if peak_reference > 0:
             max_drawdown = max(max_drawdown, (peak_reference - equity) / peak_reference * 100)
-        trades.append(ActivityFirstTrade(entry.open_time, candles[exit_index].open_time, entry_price, exit_price, candidate.stake_quote_amount, quantity, gross_pnl, fees_paid, net_pnl, net_pnl / candidate.stake_quote_amount * 100, exit_reason, candidate.family, candidate.candidate_id, exit_index - index))
+        trades.append(
+            ActivityFirstTrade(
+                entry.open_time,
+                candles[exit_index].open_time,
+                entry_price,
+                exit_price,
+                candidate.stake_quote_amount,
+                quantity,
+                gross_pnl,
+                fees_paid,
+                net_pnl,
+                net_pnl / candidate.stake_quote_amount * 100,
+                exit_reason,
+                candidate.family,
+                candidate.candidate_id,
+                exit_index - index,
+            )
+        )
         index = exit_index + 1 + candidate.cooldown_candles
     days = max(1.0, len(candles) / 1440)
-    return ActivityFirstSimulationResult(candidate, start_capital_reference, start_capital_reference + cumulative_net, cumulative_gross, cumulative_fees, cumulative_net, cumulative_net / days, len(trades), len(trades) / days, sum(1 for t in trades if t.net_pnl > 0), sum(1 for t in trades if t.net_pnl < 0), sum(1 for t in trades if t.net_pnl == 0), max_drawdown, signal_count, no_trade_count, blocked_signal_count, trades)
+    return ActivityFirstSimulationResult(
+        candidate,
+        start_capital_reference,
+        start_capital_reference + cumulative_net,
+        cumulative_gross,
+        cumulative_fees,
+        cumulative_net,
+        cumulative_net / days,
+        len(trades),
+        len(trades) / days,
+        sum(1 for t in trades if t.net_pnl > 0),
+        sum(1 for t in trades if t.net_pnl < 0),
+        sum(1 for t in trades if t.net_pnl == 0),
+        max_drawdown,
+        signal_count,
+        no_trade_count,
+        blocked_signal_count,
+        trades,
+    )
+
 
 def _empty_simulation_result(candidate: ActivityFirstCandidate, start_capital_reference: float) -> ActivityFirstSimulationResult:
     return ActivityFirstSimulationResult(candidate, start_capital_reference, start_capital_reference, 0.0, 0.0, 0.0, 0.0, 0, 0.0, 0, 0, 0, 0.0, 0, 0, 0, [])
+
 
 def _daily_pnls(trades: list[ActivityFirstTrade]) -> dict[str, float]:
     daily: dict[str, float] = {}
@@ -317,6 +482,82 @@ def _daily_pnls(trades: list[ActivityFirstTrade]) -> dict[str, float]:
         day = trade.exit_time[:10]
         daily[day] = daily.get(day, 0.0) + trade.net_pnl
     return daily
+
+
+def _forward_return(candles: list[Candle], index: int, minutes: int) -> float | None:
+    target = index + minutes
+    if target >= len(candles) or candles[index].close <= 0:
+        return None
+    return candles[target].close / candles[index].close - 1.0
+
+
+def _trigger_diagnostics(candles: list[Candle], trigger_name: str, lookback: int = 60) -> dict[str, Any]:
+    returns_60: list[float] = []
+    returns_240: list[float] = []
+    session_counts: dict[str, int] = {}
+    max_index = len(candles) - 241
+    for index in range(max(lookback, 2), max_index):
+        candidate = ActivityFirstCandidate("diagnostic", trigger_name, lookback, 0.0025, 0.0, 0.0, 0, 0, 100.0, "diagnostic")
+        if not _entry_signal(candles, index, candidate):
+            continue
+        session = _session_label(candles[index].open_time)
+        session_counts[session] = session_counts.get(session, 0) + 1
+        r60 = _forward_return(candles, index, 60)
+        r240 = _forward_return(candles, index, 240)
+        if r60 is not None:
+            returns_60.append(r60)
+        if r240 is not None:
+            returns_240.append(r240)
+    def _summary(values: list[float]) -> dict[str, float | int | None]:
+        if not values:
+            return {"count": 0, "avg_return_pct": None, "best_return_pct": None, "worst_return_pct": None, "positive_rate": None}
+        return {
+            "count": len(values),
+            "avg_return_pct": sum(values) / len(values) * 100,
+            "best_return_pct": max(values) * 100,
+            "worst_return_pct": min(values) * 100,
+            "positive_rate": sum(1 for value in values if value > 0) / len(values),
+        }
+    return {
+        "trigger_name": trigger_name,
+        "sample_count": len(returns_60),
+        "session_counts": session_counts,
+        "forward_60m": _summary(returns_60),
+        "forward_240m": _summary(returns_240),
+    }
+
+
+def _eth_regime_diagnostics(candles: list[Candle]) -> dict[str, Any]:
+    session_counts: dict[str, int] = {}
+    range_spike_count = 0
+    volume_spike_count = 0
+    for index in range(60, len(candles)):
+        context = _eth_context(candles, index, 60)
+        session = str(context["session"])
+        session_counts[session] = session_counts.get(session, 0) + 1
+        if context["range_ratio"] >= 1.5:
+            range_spike_count += 1
+        if context["volume_ratio"] >= 1.5:
+            volume_spike_count += 1
+    trigger_names = (
+        "eth_us_impulse_entry",
+        "eth_liquidity_sweep_reclaim_entry",
+        "eth_range_compression_breakout_entry",
+        "eth_bounce_after_flush_entry",
+        "eth_continuation_after_impulse_entry",
+        "eth_opening_range_reclaim_entry",
+    )
+    return {
+        "scope": "ETHUSDC-only training diagnostics",
+        "purpose": "find repeated ETH-specific market signatures before allowing any strategy mix",
+        "session_counts": session_counts,
+        "range_spike_minutes": range_spike_count,
+        "volume_spike_minutes": volume_spike_count,
+        "trigger_forward_return_diagnostics": [_trigger_diagnostics(candles, name) for name in trigger_names],
+        "missing_live_context": ["historical orderbook depth", "historical bookTicker spread", "news/economic-calendar labels"],
+        "interpretation_rule": "These diagnostics may guide candidate generation, but they do not by themselves allow live trading or blindtest execution.",
+    }
+
 
 def _candidate_summary(evaluation: _TrainingEvaluation) -> dict[str, Any]:
     r = evaluation.result
@@ -346,11 +587,12 @@ def _candidate_summary(evaluation: _TrainingEvaluation) -> dict[str, Any]:
         "sl": c.stop_loss_pct,
         "max_hold": c.max_hold_candles,
         "trailing_stop": None,
-        "context_filters": [],
+        "context_filters": [c.search_pass] if c.search_pass.startswith("eth_") else [],
         "rejection_reason": evaluation.rejection_reason,
         "distance_to_target": evaluation.target_distance,
         "balanced_score": evaluation.balanced_score,
     }
+
 
 def _evaluate_training_candidates(candidates: list[ActivityFirstCandidate], candles: list[Candle], start_capital_reference: float, filters: ExchangeInfoFilters | None) -> list[_TrainingEvaluation]:
     evaluations: list[_TrainingEvaluation] = []
@@ -364,6 +606,7 @@ def _evaluate_training_candidates(candidates: list[ActivityFirstCandidate], cand
         evaluations.append(_TrainingEvaluation(candidate, result, activity, rejection is None, rejection, score, target_distance))
     return evaluations
 
+
 def _rejection_counts(evaluations: list[_TrainingEvaluation]) -> dict[str, int]:
     counts = {"rejected_by_precheck": 0, "rejected_by_activity": 0, "rejected_by_target_math": 0, "rejected_by_training_net": 0, "rejected_by_fees": 0, "rejected_by_profit_factor": 0, "rejected_by_robustness": 0, "rejected_by_drawdown": 0, "rejected_by_deduplication": 0, "rejected_by_context_filter": 0, "rejected_by_overactivity": 0, "rejected_by_other": 0}
     for evaluation in evaluations:
@@ -372,6 +615,7 @@ def _rejection_counts(evaluations: list[_TrainingEvaluation]) -> dict[str, int]:
             counts[key if key in counts else "rejected_by_other"] += 1
     return counts
 
+
 def _search_pass_summary(evaluations: list[_TrainingEvaluation]) -> list[dict[str, Any]]:
     result = []
     for search_pass in sorted({e.candidate.search_pass for e in evaluations}):
@@ -379,6 +623,7 @@ def _search_pass_summary(evaluations: list[_TrainingEvaluation]) -> list[dict[st
         best = max(rows, key=lambda e: e.result.quote_per_day, default=None)
         result.append({"pass_name": search_pass, "candidates_generated": len(rows), "setup_tests_run": len(rows), "candidates_positive_net": sum(1 for e in rows if e.result.total_net_pnl > 0), "candidates_active_enough": sum(1 for e in rows if e.result.trades_per_day >= 1.0), "candidates_trade_allowed": sum(1 for e in rows if e.trade_allowed), "best_candidate": _candidate_summary(best) if best else None})
     return result
+
 
 def _candidate_space_status(evaluations: list[_TrainingEvaluation]) -> tuple[str, str]:
     if not evaluations:
@@ -395,8 +640,10 @@ def _candidate_space_status(evaluations: list[_TrainingEvaluation]) -> tuple[str
         return "target_activity_missing", "signals exist, but activity is below 1 trade per day"
     return "no_active_candidates", "no candidate produced training trades"
 
+
 def _diagnostic_placeholder_candidate(stake: float) -> ActivityFirstCandidate:
     return ActivityFirstCandidate("no_trade_allowed_candidate", "activity_first_router", 5, 0.0, 0.0, 0.0, 0, 0, stake, "diagnostic_only")
+
 
 def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stake_quote_amount: float = 100.0, profile: str = "normal") -> ActivityFirstRouterReport:
     if split.symbol != CONFIG.symbol:
@@ -426,14 +673,97 @@ def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stak
     best_training_quote_per_day = max((e.result.quote_per_day for e in evaluations), default=0.0)
     target_ratio = selected_result.quote_per_day / TARGET_QUOTE_PER_DAY
     target_status = "blindtest_target_reached" if selected is not None and selected_result.quote_per_day >= TARGET_QUOTE_PER_DAY else "target_not_reached"
-    rejection_summary = {"router_name": "activity_first_router", "candidate_space_status": status, "candidate_space_reason": reason, "rejection_counts": _rejection_counts(evaluations), "search_pass_summary": _search_pass_summary(evaluations), "best_activity_candidate": _candidate_summary(best_activity) if best_activity else None, "best_edge_candidate": _candidate_summary(best_edge) if best_edge else None, "best_balanced_candidate": _candidate_summary(best_balanced) if best_balanced else None, "best_fee_survivor_candidate": _candidate_summary(best_fee_survivor) if best_fee_survivor else None, "best_target_candidate": _candidate_summary(best_target) if best_target else None, "selected_trade_allowed_candidate": _candidate_summary(selected) if selected else None, "target_feasibility_status": target_status, "best_training_quote_per_day": best_training_quote_per_day, "diagnostic_only": selected is None, "selection_reason": selection_reason}
-    return ActivityFirstRouterReport(run_id, "activity_first_router", CONFIG.symbol, CONFIG.quote_asset, start_capital, stake_quote_amount, profile, split.training_start, split.training_end, split.blindtest_start, split.blindtest_end, status, reason, len(candidates), len(evaluations), len(allowed), 1 if selected else 0, sum(1 for e in evaluations if e.rejection_reason), selected_setups, rejection_summary, _candidate_summary(best_activity) if best_activity else None, _candidate_summary(best_edge) if best_edge else None, _candidate_summary(best_balanced) if best_balanced else None, _candidate_summary(best_fee_survivor) if best_fee_survivor else None, _candidate_summary(best_target) if best_target else None, selected_result.final_capital_reference, selected_result.total_gross_pnl, selected_result.total_fees, selected_result.total_net_pnl, selected_result.total_net_pnl / start_capital * 100 if start_capital else 0.0, selected_result.quote_per_day, selected_result.trade_count, selected_result.winning_trades, selected_result.losing_trades, selected_result.neutral_trades, selected_result.max_drawdown, sum(1 for v in daily.values() if v > 0), sum(1 for v in daily.values() if v < 0), sum(1 for v in daily.values() if v == 0), max(daily.values(), default=0.0), min(daily.values(), default=0.0), best_training_quote_per_day, TARGET_QUOTE_PER_DAY, target_ratio, target_status, {"run_type": "unknown", "smoke_test_not_performance_proof": False, "live_release_allowed": False, "legacy_cluster_router_used": False, "diagnostic_only": selected is None, "trade_allowed": selected is not None, "blindtest_strategy_executed": selected is not None, "selection_policy": "only_trade_allowed_candidates_may_run_blindtest", "selection_reason": selection_reason, "exchange_info_filters_used": filters is not None, "candidate_generation_version": "activity_first_v2_edge_expansion"}, [asdict(t) for t in selected_result.trades[:250]])
+    eth_diagnostics = _eth_regime_diagnostics(split.training_candles)
+    rejection_summary = {
+        "router_name": "activity_first_router",
+        "candidate_space_status": status,
+        "candidate_space_reason": reason,
+        "rejection_counts": _rejection_counts(evaluations),
+        "search_pass_summary": _search_pass_summary(evaluations),
+        "eth_regime_diagnostics": eth_diagnostics,
+        "best_activity_candidate": _candidate_summary(best_activity) if best_activity else None,
+        "best_edge_candidate": _candidate_summary(best_edge) if best_edge else None,
+        "best_balanced_candidate": _candidate_summary(best_balanced) if best_balanced else None,
+        "best_fee_survivor_candidate": _candidate_summary(best_fee_survivor) if best_fee_survivor else None,
+        "best_target_candidate": _candidate_summary(best_target) if best_target else None,
+        "selected_trade_allowed_candidate": _candidate_summary(selected) if selected else None,
+        "target_feasibility_status": target_status,
+        "best_training_quote_per_day": best_training_quote_per_day,
+        "diagnostic_only": selected is None,
+        "selection_reason": selection_reason,
+    }
+    return ActivityFirstRouterReport(
+        run_id,
+        "activity_first_router",
+        CONFIG.symbol,
+        CONFIG.quote_asset,
+        start_capital,
+        stake_quote_amount,
+        profile,
+        split.training_start,
+        split.training_end,
+        split.blindtest_start,
+        split.blindtest_end,
+        status,
+        reason,
+        len(candidates),
+        len(evaluations),
+        len(allowed),
+        1 if selected else 0,
+        sum(1 for e in evaluations if e.rejection_reason),
+        selected_setups,
+        rejection_summary,
+        _candidate_summary(best_activity) if best_activity else None,
+        _candidate_summary(best_edge) if best_edge else None,
+        _candidate_summary(best_balanced) if best_balanced else None,
+        _candidate_summary(best_fee_survivor) if best_fee_survivor else None,
+        _candidate_summary(best_target) if best_target else None,
+        selected_result.final_capital_reference,
+        selected_result.total_gross_pnl,
+        selected_result.total_fees,
+        selected_result.total_net_pnl,
+        selected_result.total_net_pnl / start_capital * 100 if start_capital else 0.0,
+        selected_result.quote_per_day,
+        selected_result.trade_count,
+        selected_result.winning_trades,
+        selected_result.losing_trades,
+        selected_result.neutral_trades,
+        selected_result.max_drawdown,
+        sum(1 for v in daily.values() if v > 0),
+        sum(1 for v in daily.values() if v < 0),
+        sum(1 for v in daily.values() if v == 0),
+        max(daily.values(), default=0.0),
+        min(daily.values(), default=0.0),
+        best_training_quote_per_day,
+        TARGET_QUOTE_PER_DAY,
+        target_ratio,
+        target_status,
+        {
+            "run_type": "unknown",
+            "smoke_test_not_performance_proof": False,
+            "live_release_allowed": False,
+            "legacy_cluster_router_used": False,
+            "diagnostic_only": selected is None,
+            "trade_allowed": selected is not None,
+            "blindtest_strategy_executed": selected is not None,
+            "selection_policy": "only_trade_allowed_candidates_may_run_blindtest",
+            "selection_reason": selection_reason,
+            "exchange_info_filters_used": filters is not None,
+            "candidate_generation_version": "activity_first_v3_eth_regime_discovery",
+            "eth_specific_strategy_scope": True,
+            "historical_news_labels_used": False,
+            "historical_orderbook_used": False,
+        },
+        [asdict(t) for t in selected_result.trades[:250]],
+    )
+
 
 def save_activity_first_router_report(report: ActivityFirstRouterReport) -> Path:
     report_dir = ensure_run_report_dir(report.run_id)
     path = report_dir / ACTIVITY_FIRST_ROUTER_REPORT_FILENAME
     path.write_text(json.dumps(asdict(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
 
 def load_activity_first_router_report(run_id: str) -> ActivityFirstRouterReport:
     raw: dict[str, Any] = json.loads(_get_activity_first_router_report_path(run_id).read_text(encoding="utf-8"))
