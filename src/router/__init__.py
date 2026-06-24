@@ -1,10 +1,4 @@
-"""Router package patches.
-
-Keep this package initializer small. It patches the activity-first router so
-ETH-specific regime candidates are not rejected by a rigid one-trade-per-day
-rule. The same scaled rule is applied for 1d/7d/14d/30d smoke and full runs;
-only the training-window length changes the required evidence.
-"""
+"""Router package patches for ETHUSDC activity-first selection."""
 
 from . import activity_first_router_report as _report
 
@@ -64,26 +58,43 @@ def _candidate_rejection(result: _report.ActivityFirstSimulationResult) -> str |
     return None
 
 
-def _search_pass_summary(evaluations: list[_report._TrainingEvaluation]) -> list[dict]:
+def _selection_score(result: _report.ActivityFirstSimulationResult) -> float:
+    target_distance = abs(_report.TARGET_QUOTE_PER_DAY - result.quote_per_day)
+    pf = _report._profit_factor(result.trades) or 0.0
+    score = result.quote_per_day + min(result.trades_per_day, 6.0) * 0.05 + min(pf, 2.0) * 0.03 - result.max_drawdown * 0.01 - target_distance * 0.03
+    if _is_eth_regime_candidate(result) and result.trades_per_day < 1.0:
+        # ETH event trades are allowed, but they must not displace a more active
+        # and similarly profitable standard setup merely because the activity gate
+        # was relaxed. This fixes the 7d regression while keeping 14/30/full fair.
+        score -= 0.20 + (1.0 - result.trades_per_day) * 0.10
+    return score
+
+
+def _evaluate_training_candidates(candidates, candles, start_capital_reference, filters, progress_callback=None):
+    evaluations = []
+    market = _report._MarketMetrics(candles)
+    ordered = sorted(candidates, key=lambda c: (c.lookback_candles, c.search_pass, c.family, c.candidate_id))
+    total = len(ordered)
+    for done, candidate in enumerate(ordered, start=1):
+        result = _report._run_candidate_on_candles(candles, candidate, start_capital_reference, filters, market)
+        rejection = _candidate_rejection(result)
+        activity = _report._activity_class(result.trades_per_day)
+        target_distance = abs(_report.TARGET_QUOTE_PER_DAY - result.quote_per_day)
+        evaluations.append(_report._TrainingEvaluation(candidate, result, activity, rejection is None, rejection, _selection_score(result), target_distance))
+        _report._emit_router_progress(progress_callback, done, total)
+    return evaluations
+
+
+def _search_pass_summary(evaluations) -> list[dict]:
     result = []
     for search_pass in sorted({e.candidate.search_pass for e in evaluations}):
         rows = [e for e in evaluations if e.candidate.search_pass == search_pass]
         best = max(rows, key=lambda e: e.result.quote_per_day, default=None)
-        result.append(
-            {
-                "pass_name": search_pass,
-                "candidates_generated": len(rows),
-                "setup_tests_run": len(rows),
-                "candidates_positive_net": sum(1 for e in rows if e.result.total_net_pnl > 0),
-                "candidates_active_enough": sum(1 for e in rows if _passes_activity_gate(e.result)),
-                "candidates_trade_allowed": sum(1 for e in rows if e.trade_allowed),
-                "best_candidate": _report._candidate_summary(best) if best else None,
-            }
-        )
+        result.append({"pass_name": search_pass, "candidates_generated": len(rows), "setup_tests_run": len(rows), "candidates_positive_net": sum(1 for e in rows if e.result.total_net_pnl > 0), "candidates_active_enough": sum(1 for e in rows if _passes_activity_gate(e.result)), "candidates_trade_allowed": sum(1 for e in rows if e.trade_allowed), "best_candidate": _report._candidate_summary(best) if best else None})
     return result
 
 
-def _candidate_space_status(evaluations: list[_report._TrainingEvaluation]) -> tuple[str, str]:
+def _candidate_space_status(evaluations) -> tuple[str, str]:
     if not evaluations:
         return "activity_search_failed", "no activity-first candidates were generated"
     if any(e.trade_allowed for e in evaluations):
@@ -100,6 +111,8 @@ def _candidate_space_status(evaluations: list[_report._TrainingEvaluation]) -> t
 
 
 _report._candidate_rejection = _candidate_rejection
+_report._evaluate_training_candidates = _evaluate_training_candidates
 _report._search_pass_summary = _search_pass_summary
 _report._candidate_space_status = _candidate_space_status
 _report._scaled_eth_activity_gate_used = True
+_report._eth_selection_penalty_used = True
