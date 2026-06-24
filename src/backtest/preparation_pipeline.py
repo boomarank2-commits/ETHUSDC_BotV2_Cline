@@ -51,10 +51,10 @@ class PreparationPipelineResult:
     strategy_v0_report_path: str | None
     strategy_v1_report_path: str | None
     cluster_router_report_path: str | None
-    activity_first_router_report_path: str | None
     backtest_summary_path: str | None
     progress_path: str
     error: str | None
+    activity_first_router_report_path: str | None = None
 
 
 def _save_progress(
@@ -188,20 +188,20 @@ def run_backtest_preparation_pipeline(
             )
             _emit_progress(progress_callback, "failed", 100.0, error, run_id=run_id, error=error)
             return PreparationPipelineResult(
-                run_id,
-                "failed",
-                run_type,
-                data_report_path,
-                data_overview_path,
-                "",
-                None,
-                None,
-                None,
-                None,
-                None,
-                summary_path,
-                progress_path,
-                error,
+                run_id=run_id,
+                status="failed",
+                run_type=run_type,
+                data_preparation_report_path=data_report_path,
+                data_overview_report_path=data_overview_path,
+                train_blind_split_report_path="",
+                buy_hold_benchmark_report_path=None,
+                strategy_v0_report_path=None,
+                strategy_v1_report_path=None,
+                cluster_router_report_path=None,
+                activity_first_router_report_path=None,
+                backtest_summary_path=summary_path,
+                progress_path=progress_path,
+                error=error,
             )
 
         _emit_progress(
@@ -304,20 +304,20 @@ def run_backtest_preparation_pipeline(
             run_id=run_id,
         )
         return PreparationPipelineResult(
-            run_id,
-            "completed",
-            run_type,
-            data_report_path,
-            data_overview_path,
-            split_report_path,
-            benchmark_report_path,
-            strategy_v0_report_path,
-            strategy_v1_report_path,
-            cluster_router_report_path,
-            activity_first_router_report_path,
-            summary_path,
-            progress_path,
-            None,
+            run_id=run_id,
+            status="completed",
+            run_type=run_type,
+            data_preparation_report_path=data_report_path,
+            data_overview_report_path=data_overview_path,
+            train_blind_split_report_path=split_report_path,
+            buy_hold_benchmark_report_path=benchmark_report_path,
+            strategy_v0_report_path=strategy_v0_report_path,
+            strategy_v1_report_path=strategy_v1_report_path,
+            cluster_router_report_path=cluster_router_report_path,
+            activity_first_router_report_path=activity_first_router_report_path,
+            backtest_summary_path=summary_path,
+            progress_path=progress_path,
+            error=None,
         )
     except Exception as error:  # noqa: BLE001
         error_message = str(error)
@@ -347,18 +347,18 @@ def run_backtest_preparation_pipeline(
             except Exception:  # noqa: BLE001
                 summary_path = None
         return PreparationPipelineResult(
-            run_id,
-            "failed",
-            run_type,
-            data_report_path,
-            data_overview_path,
-            split_report_path,
-            benchmark_report_path,
-            strategy_v0_report_path,
-            strategy_v1_report_path,
-            cluster_router_report_path,
-            activity_first_router_report_path,
-            summary_path,
-            progress_path,
-            error_message,
+            run_id=run_id,
+            status="failed",
+            run_type=run_type,
+            data_preparation_report_path=data_report_path,
+            data_overview_report_path=data_overview_path,
+            train_blind_split_report_path=split_report_path,
+            buy_hold_benchmark_report_path=benchmark_report_path,
+            strategy_v0_report_path=strategy_v0_report_path,
+            strategy_v1_report_path=strategy_v1_report_path,
+            cluster_router_report_path=cluster_router_report_path,
+            activity_first_router_report_path=activity_first_router_report_path,
+            backtest_summary_path=summary_path,
+            progress_path=progress_path,
+            error=error_message,
         )
