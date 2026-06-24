@@ -124,11 +124,16 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
     try:
         activity_report = load_activity_first_router_report(run_id)
         target_status = activity_report.target_feasibility_status
-        if activity_report.blindtest_quote_per_day >= TARGET_QUOTE_PER_DAY:
+        diagnostic_only = bool(activity_report.router_artifact.get("diagnostic_only"))
+        if activity_report.blindtest_quote_per_day >= TARGET_QUOTE_PER_DAY and not diagnostic_only:
             target_status = "blindtest_target_reached"
         selected_name = None
         if activity_report.selected_setups:
             selected_name = str(activity_report.selected_setups[0].get("candidate_id"))
+        if diagnostic_only:
+            message = "Activity First Router diagnostic completed - no trade_allowed candidate"
+        else:
+            message = "Activity First Router training+blindtest completed"
         return BacktestSummary(
             run_id=run_id,
             status="completed",
@@ -150,7 +155,7 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
             candle_count=data_report.candle_count,
             detected_gaps=data_report.detected_gaps,
             usable_for_backtest=True,
-            message="Activity First Router training+blindtest completed",
+            message=message,
             quote_per_day=activity_report.blindtest_quote_per_day,
             selected_family="activity_first_router",
             selected_candidate_name=selected_name,
