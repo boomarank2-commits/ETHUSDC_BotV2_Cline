@@ -95,6 +95,14 @@ class BacktestUiResult:
     best_training_quote_per_day: float | None = None
     target_feasibility_status: str | None = None
     target_min_training_ratio: float | None = None
+    positive_days: int | None = None
+    negative_days: int | None = None
+    best_day_pnl: float | None = None
+    worst_day_pnl: float | None = None
+    best_month: str | None = None
+    best_month_pnl: float | None = None
+    worst_month: str | None = None
+    worst_month_pnl: float | None = None
     progress_pct: float | None = None
     progress_stage: str | None = None
     elapsed_seconds: float | None = None
@@ -153,6 +161,14 @@ def _result_from_summary(summary: BacktestSummary, report_path: str) -> Backtest
         best_training_quote_per_day=summary.best_training_quote_per_day,
         target_feasibility_status=summary.target_feasibility_status,
         target_min_training_ratio=summary.target_min_training_ratio,
+        positive_days=summary.positive_days,
+        negative_days=summary.negative_days,
+        best_day_pnl=summary.best_day_pnl,
+        worst_day_pnl=summary.worst_day_pnl,
+        best_month=getattr(summary, "best_month", None),
+        best_month_pnl=getattr(summary, "best_month_pnl", None),
+        worst_month=getattr(summary, "worst_month", None),
+        worst_month_pnl=getattr(summary, "worst_month_pnl", None),
         progress_pct=progress_pct,
         progress_stage=progress_stage,
         elapsed_seconds=elapsed_seconds,
@@ -385,9 +401,11 @@ def run_backtest_for_ui(
             blindtest_end=None,
             report_path=None,
             report_folder=None,
+            run_type=selected_settings.run_type,
         )
     except Exception as error:  # noqa: BLE001
         message = _ui_error_message(str(error))
+        run_type = settings.run_type if settings is not None else "full_backtest"
         return BacktestUiResult(
             success=False,
             run_id=None,
@@ -408,4 +426,5 @@ def run_backtest_for_ui(
             blindtest_end=None,
             report_path=None,
             report_folder=None,
+            run_type=run_type,
         )
