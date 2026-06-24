@@ -19,12 +19,11 @@ from src.backtest.strategy_v1_report import (
     build_strategy_v1_training_blindtest_report,
     save_strategy_v1_report,
 )
-from src.router.cluster_router_report import build_cluster_router_report, save_cluster_router_report
+from src.data.data_overview import build_data_overview_report, save_data_overview_report
 from src.data.data_preparation_report import (
     build_data_preparation_report,
     save_data_preparation_report,
 )
-from src.data.data_overview import build_data_overview_report, save_data_overview_report
 from src.data.local_candle_loader import load_local_candle_dataset_from_catalog
 from src.data.train_blind_split import build_train_blind_split
 from src.data.train_blind_split_report import (
@@ -32,6 +31,10 @@ from src.data.train_blind_split_report import (
     save_train_blind_split_report,
 )
 from src.reports.backtest_summary import build_backtest_summary, save_backtest_summary
+from src.router.activity_first_router_report import (
+    build_activity_first_router_report,
+    save_activity_first_router_report,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class PreparationPipelineResult:
     strategy_v0_report_path: str | None
     strategy_v1_report_path: str | None
     cluster_router_report_path: str | None
+    activity_first_router_report_path: str | None
     backtest_summary_path: str | None
     progress_path: str
     error: str | None
@@ -109,7 +113,7 @@ def run_backtest_preparation_pipeline(
     training_days: int | None = None,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> PreparationPipelineResult:
-    """Run technical preparation without trades, PnL, signals or optimization."""
+    """Run data preparation, split, benchmark and strategy reports."""
     if run_type not in {"full_backtest", "smoke_test"}:
         msg = "run_type must be full_backtest or smoke_test"
         raise ValueError(msg)
@@ -129,6 +133,7 @@ def run_backtest_preparation_pipeline(
     strategy_v0_report_path: str | None = None
     strategy_v1_report_path: str | None = None
     cluster_router_report_path: str | None = None
+    activity_first_router_report_path: str | None = None
     summary_path: str | None = None
     progress_path = ""
     try:
@@ -141,7 +146,11 @@ def run_backtest_preparation_pipeline(
         )
         run_id = request.run_id
         _emit_progress(
-            progress_callback, "run_initialized", 0.0, "Backtest-Lauf initialisiert", run_id=run_id
+            progress_callback,
+            "run_initialized",
+            0.0,
+            "Backtest-Lauf initialisiert",
+            run_id=run_id,
         )
         progress_path = _save_progress(run_id, "initialized", "initialized", 0.0, started_at=started_at)
         _emit_progress(
@@ -169,7 +178,14 @@ def run_backtest_preparation_pipeline(
             error = data_report.reason or "data is not usable for backtest preparation"
             summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
             mark_backtest_run_failed(run_id, error)
-            progress_path = _save_progress(run_id, "failed", "data_preparation", 100.0, error=error, started_at=started_at)
+            progress_path = _save_progress(
+                run_id,
+                "failed",
+                "data_preparation",
+                100.0,
+                error=error,
+                started_at=started_at,
+            )
             _emit_progress(progress_callback, "failed", 100.0, error, run_id=run_id, error=error)
             return PreparationPipelineResult(
                 run_id,
@@ -182,13 +198,18 @@ def run_backtest_preparation_pipeline(
                 None,
                 None,
                 None,
+                None,
                 summary_path,
                 progress_path,
                 error,
             )
 
         _emit_progress(
-            progress_callback, "split_started", 35.0, "Train/Blindtest Split startet", run_id=run_id
+            progress_callback,
+            "split_started",
+            35.0,
+            "Train/Blindtest Split startet",
+            run_id=run_id,
         )
         progress_path = _save_progress(run_id, "running", "train_blind_split", 75.0, started_at=started_at)
         split = build_train_blind_split(dataset, training_days=training_days, blindtest_days=blindtest_days)
@@ -230,34 +251,57 @@ def run_backtest_preparation_pipeline(
             progress_callback=progress_callback,
         )
         strategy_v1_report_path = str(save_strategy_v1_report(strategy_v1_report))
-        progress_path = _save_progress(run_id, "running", "cluster_router", 89.0, started_at=started_at)
-
-        def _cluster_progress(event: dict) -> None:
-            nonlocal progress_path
-            pct = float(event.get("progress_pct", 89.0))
-            detail = str(event.get("detail") or "Cluster-Router Setup-Suche läuft")
-            progress_path = _save_progress(run_id, "running", "cluster_router", pct, message=detail, started_at=started_at)
-            if progress_callback is not None:
-                progress_callback({**event, "run_id": run_id})
-
-        cluster_router_report = build_cluster_router_report(
+        progress_path = _save_progress(
+            run_id,
+            "running",
+            "activity_first_router",
+            84.0,
+            started_at=started_at,
+        )
+        _emit_progress(
+            progress_callback,
+            "activity_first_router_started",
+            84.0,
+            "Activity-First Router läuft",
+            run_id=run_id,
+        )
+        activity_first_router_report = build_activity_first_router_report(
             run_id,
             split,
             stake_quote_amount=stake_quote_amount,
-            progress_callback=_cluster_progress,
+            profile=profile,
         )
-        cluster_router_report.router_artifact["run_type"] = run_type
-        cluster_router_report.router_artifact["smoke_test_not_performance_proof"] = run_type == "smoke_test"
-        cluster_router_report.router_artifact["live_release_allowed"] = False
-        cluster_router_report_path = str(save_cluster_router_report(cluster_router_report))
+        activity_first_router_report.router_artifact["run_type"] = run_type
+        activity_first_router_report.router_artifact["smoke_test_not_performance_proof"] = (
+            run_type == "smoke_test"
+        )
+        activity_first_router_report.router_artifact["live_release_allowed"] = False
+        activity_first_router_report_path = str(
+            save_activity_first_router_report(activity_first_router_report)
+        )
         _emit_progress(
-            progress_callback, "summary_started", 90.0, "Reports werden gespeichert", run_id=run_id
+            progress_callback,
+            "activity_first_router_completed",
+            89.0,
+            "Activity-First Router abgeschlossen",
+            run_id=run_id,
+        )
+        _emit_progress(
+            progress_callback,
+            "summary_started",
+            90.0,
+            "Reports werden gespeichert",
+            run_id=run_id,
         )
         summary_path = str(save_backtest_summary(build_backtest_summary(run_id)))
         progress_path = _save_progress(run_id, "completed", "completed", 100.0, started_at=started_at)
         mark_backtest_run_completed(run_id)
         _emit_progress(
-            progress_callback, "completed", 100.0, "Backtest abgeschlossen", run_id=run_id
+            progress_callback,
+            "completed",
+            100.0,
+            "Backtest abgeschlossen",
+            run_id=run_id,
         )
         return PreparationPipelineResult(
             run_id,
@@ -270,6 +314,7 @@ def run_backtest_preparation_pipeline(
             strategy_v0_report_path,
             strategy_v1_report_path,
             cluster_router_report_path,
+            activity_first_router_report_path,
             summary_path,
             progress_path,
             None,
@@ -280,7 +325,12 @@ def run_backtest_preparation_pipeline(
             try:
                 mark_backtest_run_failed(run_id, error_message)
                 progress_path = _save_progress(
-                    run_id, "failed", "failed", 100.0, error=error_message, started_at=locals().get("started_at")
+                    run_id,
+                    "failed",
+                    "failed",
+                    100.0,
+                    error=error_message,
+                    started_at=locals().get("started_at"),
                 )
                 _emit_progress(
                     progress_callback,
@@ -307,6 +357,7 @@ def run_backtest_preparation_pipeline(
             strategy_v0_report_path,
             strategy_v1_report_path,
             cluster_router_report_path,
+            activity_first_router_report_path,
             summary_path,
             progress_path,
             error_message,
