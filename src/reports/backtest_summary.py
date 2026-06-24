@@ -12,13 +12,17 @@ from src.backtest.strategy_v1_report import load_strategy_v1_report
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
 from src.data.data_preparation_report import load_data_preparation_report
 from src.data.train_blind_split_report import load_train_blind_split_report
+from src.router.activity_first_router_report import load_activity_first_router_report
 from src.router.cluster_router_report import load_cluster_router_report
 
 BACKTEST_SUMMARY_FILENAME = "backtest_summary.json"
 TARGET_QUOTE_PER_DAY = 3.0
 
 
-def _best_router_training_quote_per_day(rejection_summary: dict[str, Any], selected_setups: list[dict[str, Any]]) -> float:
+def _best_router_training_quote_per_day(
+    rejection_summary: dict[str, Any],
+    selected_setups: list[dict[str, Any]],
+) -> float:
     values = [float(row.get("training_quote_per_day", 0.0)) for row in selected_setups]
     for key in (
         "best_found_candidate",
@@ -118,6 +122,56 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
 
     split_report = load_train_blind_split_report(run_id)
     try:
+        activity_report = load_activity_first_router_report(run_id)
+        target_status = activity_report.target_feasibility_status
+        if activity_report.blindtest_quote_per_day >= TARGET_QUOTE_PER_DAY:
+            target_status = "blindtest_target_reached"
+        selected_name = None
+        if activity_report.selected_setups:
+            selected_name = str(activity_report.selected_setups[0].get("candidate_id"))
+        return BacktestSummary(
+            run_id=run_id,
+            status="completed",
+            symbol=activity_report.symbol,
+            quote_asset=activity_report.quote_asset,
+            start_capital=activity_report.start_capital_reference,
+            final_capital=activity_report.blindtest_final_capital_reference,
+            total_pnl=activity_report.blindtest_total_net_pnl,
+            total_pnl_pct=(
+                activity_report.blindtest_total_net_pnl
+                / activity_report.start_capital_reference
+                * 100
+            ),
+            trade_count=activity_report.blindtest_trade_count,
+            training_start=split_report.training_start,
+            training_end=split_report.training_end,
+            blindtest_start=split_report.blindtest_start,
+            blindtest_end=split_report.blindtest_end,
+            candle_count=data_report.candle_count,
+            detected_gaps=data_report.detected_gaps,
+            usable_for_backtest=True,
+            message="Activity First Router training+blindtest completed",
+            quote_per_day=activity_report.blindtest_quote_per_day,
+            selected_family="activity_first_router",
+            selected_candidate_name=selected_name,
+            positive_days=activity_report.positive_days,
+            negative_days=activity_report.negative_days,
+            best_day_pnl=activity_report.best_day_pnl,
+            worst_day_pnl=activity_report.worst_day_pnl,
+            no_robust_positive_candidate=activity_report.trade_allowed_setup_count == 0,
+            candidate_space_status=activity_report.candidate_space_status,
+            best_final_training_score=None,
+            best_training_quote_per_day=activity_report.best_training_quote_per_day,
+            target_feasibility_status=target_status,
+            target_min_training_ratio=(
+                activity_report.blindtest_quote_per_day / TARGET_QUOTE_PER_DAY
+            ),
+            run_type=str(activity_report.router_artifact.get("run_type") or run_type),
+        )
+    except FileNotFoundError:
+        pass
+
+    try:
         cluster_router_report = load_cluster_router_report(run_id)
         diagnostics = _load_cluster_router_diagnostics(run_id)
         if cluster_router_report.blindtest_quote_per_day >= TARGET_QUOTE_PER_DAY:
@@ -146,7 +200,9 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
             start_capital=cluster_router_report.start_capital_reference,
             final_capital=cluster_router_report.final_capital_reference,
             total_pnl=cluster_router_report.blindtest_total_net_pnl,
-            total_pnl_pct=cluster_router_report.blindtest_total_net_pnl / cluster_router_report.start_capital_reference * 100,
+            total_pnl_pct=cluster_router_report.blindtest_total_net_pnl
+            / cluster_router_report.start_capital_reference
+            * 100,
             trade_count=cluster_router_report.blindtest_trade_count,
             training_start=split_report.training_start,
             training_end=split_report.training_end,
@@ -171,7 +227,8 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
                 cluster_router_report.selected_setups,
             ),
             target_feasibility_status=target_status,
-            target_min_training_ratio=cluster_router_report.blindtest_quote_per_day / TARGET_QUOTE_PER_DAY,
+            target_min_training_ratio=cluster_router_report.blindtest_quote_per_day
+            / TARGET_QUOTE_PER_DAY,
             run_type=str(cluster_router_report.router_artifact.get("run_type") or run_type),
         )
     except FileNotFoundError:
