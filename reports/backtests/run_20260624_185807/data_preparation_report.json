@@ -1,0 +1,12 @@
+{
+  "candle_count": 1590689,
+  "detected_gaps": 0,
+  "first_open_time": "2023-06-11T19:31:00Z",
+  "has_required_lookback": true,
+  "interval": "1m",
+  "last_open_time": "2026-06-20T10:59:00Z",
+  "reason": null,
+  "run_id": "run_20260624_185807",
+  "symbol": "ETHUSDC",
+  "usable_for_backtest": true
+}
