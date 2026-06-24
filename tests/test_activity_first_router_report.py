@@ -19,8 +19,35 @@ def _candle(index: int) -> Candle:
     )
 
 
+def _flat_candle(index: int) -> Candle:
+    return Candle(
+        open_time=f"2026-01-01T{index // 60:02d}:{index % 60:02d}:00Z",
+        open=100.0,
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        volume=10.0,
+    )
+
+
 def _split(count: int = 420) -> TrainBlindSplit:
     candles = [_candle(index) for index in range(count)]
+    training = candles[:300]
+    blindtest = candles[300:]
+    return TrainBlindSplit(
+        symbol="ETHUSDC",
+        interval="1m",
+        training_candles=training,
+        blindtest_candles=blindtest,
+        training_start=training[0].open_time,
+        training_end=training[-1].open_time,
+        blindtest_start=blindtest[0].open_time,
+        blindtest_end=blindtest[-1].open_time,
+    )
+
+
+def _flat_split(count: int = 420) -> TrainBlindSplit:
+    candles = [_flat_candle(index) for index in range(count)]
     training = candles[:300]
     blindtest = candles[300:]
     return TrainBlindSplit(
@@ -73,3 +100,16 @@ def test_activity_first_router_report_contains_diagnostics_even_without_target()
     assert "rejected_by_activity" in rejection_counts
     assert report.target_quote_per_day == 3.0
     assert report.router_artifact["legacy_cluster_router_used"] is False
+
+
+def test_no_trade_allowed_candidate_is_diagnostic_only() -> None:
+    report = build_activity_first_router_report("run_test_activity_no_allowed", _flat_split())
+
+    assert report.trade_allowed_setup_count == 0
+    assert report.selected_candidate_count == 0
+    assert report.selected_setups == []
+    assert report.blindtest_trade_count == 0
+    assert report.blindtest_total_net_pnl == 0.0
+    assert report.blindtest_final_capital_reference == report.start_capital_reference
+    assert report.router_artifact["diagnostic_only"] is True
+    assert report.router_artifact["blindtest_strategy_executed"] is False
