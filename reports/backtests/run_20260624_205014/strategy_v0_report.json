@@ -1,0 +1,28 @@
+{
+  "blindtest_end": "2026-06-20T10:59:00Z",
+  "blindtest_final_capital": 19.275920092269963,
+  "blindtest_losing_trades": 383,
+  "blindtest_max_drawdown": 83.0966042040072,
+  "blindtest_start": "2025-06-20T11:00:00Z",
+  "blindtest_total_pnl": -80.72407990773004,
+  "blindtest_total_pnl_pct": -80.72407990773004,
+  "blindtest_trade_count": 661,
+  "blindtest_winning_trades": 278,
+  "quote_asset": "USDC",
+  "run_id": "run_20260624_205014",
+  "selected_candidate": {
+    "entry_threshold_pct": 0.012,
+    "fee_bps": 10.0,
+    "lookback_candles": 30,
+    "max_hold_candles": 720,
+    "name": "v0_lb30_th0.012_tp0.015_sl0.012_mh720",
+    "stop_loss_pct": 0.012,
+    "take_profit_pct": 0.015
+  },
+  "start_capital": 100.0,
+  "symbol": "ETHUSDC",
+  "training_final_capital": 19.632092365150893,
+  "training_total_pnl": -80.3679076348491,
+  "training_total_pnl_pct": -80.3679076348491,
+  "training_trade_count": 1205
+}

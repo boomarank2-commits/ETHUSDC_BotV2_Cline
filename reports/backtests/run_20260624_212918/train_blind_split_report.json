@@ -1,0 +1,13 @@
+{
+  "blindtest_after_training": true,
+  "blindtest_candle_count": 20160,
+  "blindtest_end": "2026-06-20T10:59:00Z",
+  "blindtest_start": "2026-06-06T11:00:00Z",
+  "has_overlap": false,
+  "interval": "1m",
+  "run_id": "run_20260624_212918",
+  "symbol": "ETHUSDC",
+  "training_candle_count": 40320,
+  "training_end": "2026-06-06T10:59:00Z",
+  "training_start": "2026-05-09T11:00:00Z"
+}
