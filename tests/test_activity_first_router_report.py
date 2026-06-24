@@ -81,7 +81,9 @@ def test_activity_first_router_builds_required_entry_families() -> None:
     assert report.setup_test_count == report.candidate_count
     assert report.candidate_space_status in {
         "trade_allowed_found",
+        "trade_allowed_blocked",
         "edge_after_fees_failed",
+        "target_edge_missing",
         "target_activity_missing",
         "no_active_candidates",
     }
@@ -100,6 +102,20 @@ def test_activity_first_router_report_contains_diagnostics_even_without_target()
     assert "rejected_by_activity" in rejection_counts
     assert report.target_quote_per_day == 3.0
     assert report.router_artifact["legacy_cluster_router_used"] is False
+
+
+def test_eth_specific_regime_diagnostics_are_reported() -> None:
+    report = build_activity_first_router_report("run_test_eth_regime_diagnostics", _split(700))
+
+    diagnostics = report.rejection_summary["eth_regime_diagnostics"]
+    pass_names = {row["pass_name"] for row in report.rejection_summary["search_pass_summary"]}
+
+    assert report.router_artifact["eth_specific_strategy_scope"] is True
+    assert report.router_artifact["candidate_generation_version"] == "activity_first_v3_eth_regime_discovery"
+    assert "eth_regime_discovery" in pass_names
+    assert diagnostics["scope"] == "ETHUSDC-only training diagnostics"
+    assert diagnostics["trigger_forward_return_diagnostics"]
+    assert "historical orderbook depth" in diagnostics["missing_live_context"]
 
 
 def test_no_trade_allowed_candidate_is_diagnostic_only() -> None:
