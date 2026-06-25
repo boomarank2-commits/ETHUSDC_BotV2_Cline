@@ -36,6 +36,52 @@ def test_report_can_be_created_with_valid_local_test_data(tmp_path: Path) -> Non
     assert report.interval == "1m"
 
 
+def test_report_contains_derived_timeframe_counts_from_ethusdc_1m(tmp_path: Path) -> None:
+    candles = [
+        Candle(f"2026-01-01T00:{minute:02d}:00", 100.0, 110.0, 90.0, 105.0, 1.0)
+        for minute in range(10)
+    ]
+    dataset = CandleDataset("ETHUSDC", "1m", candles)
+    _write_dataset_to_catalog(tmp_path, dataset)
+
+    report = build_data_preparation_report("run_20260612_180011")
+
+    assert report.ethusdc_1m_available is True
+    assert report.derived_timeframes_available is True
+    assert report.derived_timeframe_candle_counts == {
+        "5m": 2,
+        "15m": 0,
+        "30m": 0,
+        "1h": 0,
+        "4h": 0,
+        "1d": 0,
+    }
+
+
+def test_missing_optional_data_sources_are_reported_honestly(tmp_path: Path) -> None:
+    dataset = CandleDataset("ETHUSDC", "1m", [_candle("2026-01-01T00:00:00")])
+    _write_dataset_to_catalog(tmp_path, dataset)
+
+    report = build_data_preparation_report("run_20260612_180012")
+
+    assert report.btcusdc_context_available is False
+    assert report.ethbtc_context_available is False
+    assert report.trades_available is False
+    assert report.agg_trades_available is False
+    assert report.bookticker_available is False
+    assert report.orderbook_available is False
+    assert report.data_source_status == {
+        "ETHUSDC 1m": "available",
+        "derived_timeframes": "missing",
+        "BTCUSDC context": "missing",
+        "ETHBTC context": "missing",
+        "trades": "missing",
+        "aggTrades": "missing",
+        "bookTicker": "not_ready",
+        "orderbook": "not_ready",
+    }
+
+
 def test_report_is_saved_in_run_report_dir(tmp_path: Path) -> None:
     dataset = CandleDataset("ETHUSDC", "1m", [_candle("2026-01-01T00:00:00")])
     _write_dataset_to_catalog(tmp_path, dataset)

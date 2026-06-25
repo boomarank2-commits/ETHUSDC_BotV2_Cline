@@ -6,8 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
-from src.data.candle_quality import CandleQualityReport
-from src.data.local_candle_loader import build_local_candle_quality_from_catalog
+from src.data.candle_quality import CandleQualityReport, build_candle_quality_report
+from src.data.derived_timeframes import build_derived_timeframe_counts
+from src.data.local_candle_loader import (
+    build_local_candle_quality_from_catalog,
+    load_local_candle_dataset_from_catalog,
+)
 
 DATA_PREPARATION_REPORT_FILENAME = "data_preparation_report.json"
 
@@ -26,6 +30,16 @@ class DataPreparationReport:
     has_required_lookback: bool
     usable_for_backtest: bool
     reason: str | None
+    ethusdc_1m_available: bool = True
+    derived_timeframes_available: bool = False
+    derived_timeframe_candle_counts: dict[str, int] | None = None
+    btcusdc_context_available: bool = False
+    ethbtc_context_available: bool = False
+    trades_available: bool = False
+    agg_trades_available: bool = False
+    bookticker_available: bool = False
+    orderbook_available: bool = False
+    data_source_status: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         get_run_report_dir(self.run_id)
@@ -46,15 +60,45 @@ def _build_unusable_reason(has_required_lookback: bool, detected_gaps: int) -> s
     return "; ".join(reasons)
 
 
+def _context_available(symbol: str) -> bool:
+    try:
+        build_local_candle_quality_from_catalog(symbol, "1m")
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _status(available: bool) -> str:
+    return "available" if available else "missing"
+
+
 def build_data_preparation_report(
     run_id: str,
     quality: CandleQualityReport | None = None,
 ) -> DataPreparationReport:
     """Build a technical data preparation report without backtest calculation."""
     get_run_report_dir(run_id)
+    derived_counts: dict[str, int] | None = None
     if quality is None:
-        quality = build_local_candle_quality_from_catalog()
+        dataset = load_local_candle_dataset_from_catalog("ETHUSDC", "1m")
+        quality = build_candle_quality_report(dataset)
+        derived_counts = build_derived_timeframe_counts(dataset.candles)
+    else:
+        derived_counts = {timeframe: 0 for timeframe in ("5m", "15m", "30m", "1h", "4h", "1d")}
     usable_for_backtest = quality.has_required_lookback and quality.detected_gaps == 0
+    btcusdc_available = _context_available("BTCUSDC")
+    ethbtc_available = _context_available("ETHBTC")
+    derived_available = bool(derived_counts) and any(count > 0 for count in derived_counts.values())
+    data_source_status = {
+        "ETHUSDC 1m": _status(True),
+        "derived_timeframes": _status(derived_available),
+        "BTCUSDC context": _status(btcusdc_available),
+        "ETHBTC context": _status(ethbtc_available),
+        "trades": "missing",
+        "aggTrades": "missing",
+        "bookTicker": "not_ready",
+        "orderbook": "not_ready",
+    }
     return DataPreparationReport(
         run_id=run_id,
         symbol=quality.symbol,
@@ -66,6 +110,16 @@ def build_data_preparation_report(
         has_required_lookback=quality.has_required_lookback,
         usable_for_backtest=usable_for_backtest,
         reason=_build_unusable_reason(quality.has_required_lookback, quality.detected_gaps),
+        ethusdc_1m_available=True,
+        derived_timeframes_available=derived_available,
+        derived_timeframe_candle_counts=derived_counts,
+        btcusdc_context_available=btcusdc_available,
+        ethbtc_context_available=ethbtc_available,
+        trades_available=False,
+        agg_trades_available=False,
+        bookticker_available=False,
+        orderbook_available=False,
+        data_source_status=data_source_status,
     )
 
 

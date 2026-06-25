@@ -9,6 +9,9 @@ Latest analyzed run:
 - Cause: old 12-trade/year setup was correctly blocked, but no replacement setup was found; 109/109 rows skipped in Full-Training precheck: 61 target-math, 48 activity.
 
 Current patch:
+- Daten-/Feature-Baustein ergänzt: lookahead-sichere abgeleitete ETHUSDC-Timeframes 5m/15m/30m/1h/4h/1d aus vorhandenen 1m-Candles; nur vollständig geschlossene Buckets werden als Feature-Kerzen gezählt.
+- `data_preparation_report.json` zeigt jetzt ETHUSDC-1m vorhanden, `derived_timeframes_available`, Counts je abgeleitetem Timeframe sowie BTCUSDC/ETHBTC/trades/aggTrades/bookTicker/orderbook available/missing. BookTicker/Orderbook bleiben missing und ungenutzt.
+- Keine Strategie-, Router-, Smoke-/Full-Engine- oder Live/Paper-Änderung.
 - Finaler UI-naher Lauf `run_20260623_163853`: completed, 0 Trades, `optimizer_search_space_failed`, Best training 0.06237. Nach Patch werden positive/aktive Kandidaten vollständig bewertet statt alle per Precheck zu verstecken; Hauptblocker bleibt realer Suchraum: Aktivität/Target-Math/Training-Net.
 - `run_20260623_155039` Ursache: 123/123 Kandidaten `skipped_after_training_precheck=True`; Best-Candidate mit 0.0624 USDC/Tag war nicht trade_allowed, weil nur 1 Trade/14d, target_math_not_reachable_current_activity.
 - Gemeinsamer Summary-Fehler gepatcht: Bei 0 trade_allowed zeigte UI `Best training USDC/Tag=0.0000`, obwohl Router best_* Kandidaten hatte; Summary nutzt jetzt Best-Candidates aus `rejection_summary`.
@@ -29,7 +32,7 @@ Current patch:
 - Old target-math-dead rare setups remain blocked; no V1 fallback, no blindtest learning, no fake trades.
 
 Next action:
-- 7-Tage-Smoke-Test über UI erneut starten; wenn technisch sauber, danach Full-Backtest sinnvoll. Cline startet keinen Full-Backtest.
+- Bei Bedarf 7-Tage-Smoke-Test über UI erneut starten; wenn technisch sauber, danach Full-Backtest sinnvoll. Cline startet keinen Full-Backtest.
 
 Tests latest:
 - `python -m compileall src tests` green.

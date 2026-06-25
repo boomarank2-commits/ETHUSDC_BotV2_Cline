@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-06-25 - Daten-/Feature-Baustein abgeleitete Timeframes
+
+Geändert: `src/data/derived_timeframes.py` erzeugt aus ETHUSDC-1m-Candles lookahead-sicher nur vollständig geschlossene 5m/15m/30m/1h/4h/1d-Kerzen. `data_preparation_report.json` meldet ETHUSDC-1m, `derived_timeframes_available`, Counts und optionale Quellen BTCUSDC/ETHBTC/trades/aggTrades/bookTicker/orderbook ehrlich als available/missing.
+
+Keine neue Handelslogik, kein Live/Paper, keine separate Smoke-Engine; Smoke und Full bleiben derselbe Backtest-Apparat. Tests grün: `python -m compileall src tests`, `python -m pytest -q`.
+
 ## 2026-06-23 - Finaler Precheck-Transparenz-Patch und UI-naher Smoke
 
 `run_20260623_155039`: 0 Trades trotz Best training 0.0624, weil 123/123 Kandidaten im Training-Precheck endeten; positiver Best-Candidate hatte nur 1 Trade/14d und wurde nicht vollständig split-/validation-/robustness-bewertet.
