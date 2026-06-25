@@ -17,28 +17,26 @@ Smoke runs with 1 / 7 / 14 / 30 blindtest days are temporary technical checks on
 
 Read order for Cline, Codex or any AI coding agent:
 
-1. docs/FINAL_ONE_YEAR_BLINDTEST_TRUTH.md
-2. specs/07_FINAL_ONE_YEAR_BLINDTEST_CONTRACT.md
-3. .clinerules/
-4. AGENTS.md
-5. memory-bank/activeContext.md
-6. memory-bank/projectbrief.md
-7. docs/MASTER_TRUTH.md
-8. docs/BACKTEST_TRUTH.md
-9. docs/ROUTER_TRUTH.md
-10. docs/DATA_TRUTH.md
-11. docs/UI_TRUTH.md
-12. docs/IMPLEMENTATION_PLAN.md
-13. docs/BACKTEST_ROUTER_CONTRACT.md
-14. specs/00_MASTER_GOAL.md
-15. specs/01_BACKTEST_CONTRACT.md
-16. specs/02_SMOKE_TEST_CONTRACT.md
-17. specs/03_STRATEGY_ENGINE_CONTRACT.md
-18. specs/04_UI_CONTRACT.md
-19. specs/05_REPORTING_CONTRACT.md
-20. specs/06_ACCEPTANCE_TESTS.md
+1. docs/CURRENT_TRUTH_MAP.md
+2. docs/FINAL_ONE_YEAR_BLINDTEST_TRUTH.md
+3. specs/07_FINAL_ONE_YEAR_BLINDTEST_CONTRACT.md
+4. README.md
+5. AGENTS.md
+6. docs/DATA_TRUTH.md
+7. docs/BACKTEST_TRUTH.md
+8. docs/ROUTER_TRUTH.md
+9. specs/00_MASTER_GOAL.md
+10. specs/01_BACKTEST_CONTRACT.md
+11. specs/02_SMOKE_TEST_CONTRACT.md
+12. specs/03_STRATEGY_ENGINE_CONTRACT.md
+13. specs/04_UI_CONTRACT.md
+14. specs/05_REPORTING_CONTRACT.md
+15. specs/06_ACCEPTANCE_TESTS.md
+16. memory-bank/activeContext.md
+17. memory-bank/NEXT_WORK_STATE.md
+18. memory-bank/progress.md
 
-Old files are not truth.
+Old files are not truth. If documents conflict, `docs/CURRENT_TRUTH_MAP.md` decides the current priority and archive-risk status.
 
 ## UI starten
 
