@@ -61,6 +61,26 @@ Adaptive means:
 - router chooses one of the trained actions: setup A, setup B, setup C, or no_trade
 - blindtest never changes parameters after seeing blindtest results
 
+## Data basis
+
+The final model must not be limited to raw 1m candles only.
+
+Allowed when validated and time-safe:
+
+- ETHUSDC 1m candles as main base
+- derived timeframes from ETHUSDC candles: 5m, 15m, 30m, 1h, 4h, 1d
+- ETHUSDC trades
+- ETHUSDC aggTrades
+- exchange_info and Binance rules
+- fee model
+- slippage model
+- BTCUSDC context if valid
+- ETHBTC relative ETH strength if valid
+- bookTicker if live-collected and validated
+- orderbook snapshots / depth if live-collected and validated
+
+Orderbook and bookTicker data may enter the backtest only after they exist historically for that tested point and are clean enough. A practical minimum is at least 30 days of live-collected, gap-aware, lookahead-safe data.
+
 ## What must be patched now
 
 Any current pool execution that sums all candidate results together is wrong.
@@ -89,6 +109,9 @@ Reports must make this visible:
 - training_days
 - blindtest_days
 - run_type
+- data_sources_used
+- data_sources_missing
+- data_sources_rejected
 
 ## Final acceptance
 
