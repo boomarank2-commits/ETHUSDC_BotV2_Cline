@@ -1,38 +1,46 @@
-﻿# UI_TRUTH
+# UI_TRUTH
 
-This file contains only confirmed UI truth.
+Bei Widerspruch gilt `docs/CURRENT_TRUTH_MAP.md`.
 
-## Current Phase
+## Aktuelle Phase
 
-UI is not part of the first build phase.
+Die UI ist fuer Backtest-Steuerung Teil der aktuellen Wahrheit.
 
-The first build phase is the clean backtest core.
+Smoke und Full muessen ueber denselben UI-/Controller-Pfad gestartet werden. Der UI-Start fuehrt zuerst den zentralen Daten-Ensure aus und startet danach die gemeinsame Backtest-Pipeline.
 
-## Later UI Goal
+## Erlaubt
 
-The later UI should control and display the bot.
-It must not contain trading logic.
+- Einsatz anzeigen und setzen
+- Profil anzeigen und setzen
+- Smoke 1/7/14/30 starten
+- Full-Backtest starten
+- Datenstatus anzeigen
+- Laufstatus und Fortschritt anzeigen
+- Ergebnisreports anzeigen
+- spaeter einen Uebernahme-Kandidaten bewusst anzeigen
 
-## Later Test Trade Goal
+Die UI darf keine eigene zweite Backtestlogik besitzen.
 
-A later Test Trade button is planned.
+## Gesperrt
 
-A Test Trade means:
-- only after consciously taken-over configuration
-- the bot waits for a learned profitable situation
-- it executes exactly one complete trade from entry to exit
-- it collects as much diagnostic and comparison data as possible
-- it documents deviations from backtest expectation, for example later TP/SL trigger, different execution, slippage or timing
-- it stops automatically afterwards
-- it does not start a second trade
+Bis Backtest, Training, Router, Blindtest, Reports und bewusste Uebernahme korrekt sind, bleiben gesperrt:
 
-## Forbidden For Now
+- Paper-Modus
+- Testtrade
+- echte Marktorder
+- automatische Strategieuebernahme
 
-Do not build:
-- Paper trading
-- Live trading
-- Test trade
-- order execution
-- UI buttons for trading
+## Spaeterer Testtrade
 
-until the backtest core, training, router, blindtest and reports are correct.
+Ein spaeterer Testtrade bedeutet: genau eine passende gelernte Situation abwarten, genau einen kompletten Trade von Entry bis Exit testen, Diagnose sammeln und danach stoppen.
+
+## Monatsworkflow
+
+Nach bewusst uebernommener Konfiguration soll die UI spaeter den Monatszyklus unterstuetzen:
+
+1. Daten aktualisieren.
+2. 3 Jahre Fenster bilden.
+3. 2 Jahre Training/Optimierung.
+4. 1 Jahr Blindtest.
+5. Kandidat mit Kennzahlen anzeigen.
+6. Nutzer entscheidet bewusst, ob der Kandidat uebernommen wird.
