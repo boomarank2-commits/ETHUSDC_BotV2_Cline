@@ -1,24 +1,26 @@
-﻿# BACKTEST_TRUTH
+# BACKTEST_TRUTH
 
 This file contains only confirmed backtest truth.
 
 ## Window
 
-The backtest uses:
+The final backtest uses:
 
 - 730 days training / optimization
 - then 365 days blindtest
 
 The blindtest is unknown future data from the perspective of training.
 
+Short runs with 1 / 7 / 14 / 30 blindtest days are temporary smoke checks only. They are shortened versions of the same backtest contract.
+
 ## Training
 
 Training may:
 - find situations
-- build clusters
+- build clusters / regimes
 - test strategies as search space
 - optimize local setups
-- create a frozen router
+- create a frozen router / candidate pool
 
 Training must not use blindtest data.
 
@@ -36,6 +38,29 @@ Blindtest must not:
 - change parameters
 - create new setups
 - use future information
+
+## Shared Pool Execution
+
+A pool may contain multiple selected candidates.
+
+The blindtest still simulates one shared account context.
+
+It is wrong to run each candidate independently and add all candidate results together.
+
+Correct behavior:
+- collect candidate proposals from the frozen pool
+- sort proposals by time
+- resolve overlapping proposals by router / training score
+- execute only the selected proposal for that shared time context
+- report skipped overlaps
+
+Required visibility:
+- selected_pool_size
+- pool_raw_proposals
+- pool_executed_trades
+- pool_skipped_overlaps
+- pool_overlap_guard_used
+- selection_policy
 
 ## Blindtest Purpose
 
@@ -78,8 +103,8 @@ Do not add hidden protection logic to make results look safer.
 A valid backtest must report:
 - training window
 - blindtest window
-- learned clusters
-- approved setups
+- learned clusters / regimes
+- approved setups / selected pool
 - router decisions
 - trades
 - no_trade reasons
