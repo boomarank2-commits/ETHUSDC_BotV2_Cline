@@ -2,90 +2,105 @@
 
 ## Projekt
 
-ETHUSDC_BotV2_Cline
+ETHUSDC_BotV2_Cline.
 
-## Vor allem zuerst lesen
+Lokaler Ethereum-Bot auf Binance Spot. Hauptpaar ist ETHUSDC. Quote- und Kapitalbasis ist USDC. Der Bot ist LONG-only.
+
+## Zuerst lesen
 
 Jeder Agent liest zuerst:
 
-1. docs/FINAL_ONE_YEAR_BLINDTEST_TRUTH.md
-2. README.md
-3. docs/MASTER_TRUTH.md
-4. docs/BACKTEST_TRUTH.md
-5. docs/ROUTER_TRUTH.md
-6. specs/00_MASTER_GOAL.md
-7. specs/01_BACKTEST_CONTRACT.md
-8. specs/02_SMOKE_TEST_CONTRACT.md
-9. specs/03_STRATEGY_ENGINE_CONTRACT.md
-10. specs/04_UI_CONTRACT.md
-11. specs/05_REPORTING_CONTRACT.md
-12. specs/06_ACCEPTANCE_TESTS.md
+1. `docs/CURRENT_TRUTH_MAP.md`
+2. `docs/FINAL_ONE_YEAR_BLINDTEST_TRUTH.md`
+3. `specs/07_FINAL_ONE_YEAR_BLINDTEST_CONTRACT.md`
+4. `README.md`
+5. `AGENTS.md`
+6. `docs/DATA_TRUTH.md`
+7. `docs/BACKTEST_TRUTH.md`
+8. `docs/ROUTER_TRUTH.md`
+9. `specs/00_MASTER_GOAL.md`
+10. `specs/01_BACKTEST_CONTRACT.md`
+11. `specs/02_SMOKE_TEST_CONTRACT.md`
+12. `specs/03_STRATEGY_ENGINE_CONTRACT.md`
+13. `specs/04_UI_CONTRACT.md`
+14. `specs/05_REPORTING_CONTRACT.md`
+15. `specs/06_ACCEPTANCE_TESTS.md`
+16. `memory-bank/activeContext.md`
+17. `memory-bank/NEXT_WORK_STATE.md`
+18. `memory-bank/progress.md`
+
+Bei Widerspruch gilt `docs/CURRENT_TRUTH_MAP.md`.
 
 ## Harte Regeln
 
-- Symbol: ETHUSDC.
-- Quote-Währung: USDC.
-- Binance Spot LONG-only.
+- ETHUSDC.
+- USDC.
+- Binance Spot.
+- LONG-only.
 - Kein Short.
 - Kein Margin.
 - Kein Futures.
 - Kein Leverage.
 - Kein Blindtest-Lernen.
 - Kein Lookahead.
-- Kein V1-Fallback als versteckte Logik.
+- Kein V1-Fallback.
 - Keine Fake-Trades.
-- Keine separaten Backtest-Engines.
+- Keine getrennten Backtest-Engines.
+- Kein paralleles Addieren von Kandidaten als getrennte Konten.
+- Keine Rohdaten in GitHub committen.
 
-## UI ist Wahrheit
+## Zielbild
 
-Alles, was später relevant ist, muss aus der UI heraus funktionieren.
+Das Ziel ist ein Ethereum-spezifischer Bot, der mit lokalen historischen und laufend gesammelten Daten arbeitet.
 
-CLI-/Inline-Tests dürfen nur technische Hilfen sein, aber niemals als Beweis ersetzen, dass der UI-Pfad funktioniert.
+Finale Pruefung:
 
-## Ein gemeinsamer Backtest-Apparat
-
-Smoke-Test und Full-Backtest sind derselbe Backtest-Apparat.
-
-Der einzige Unterschied ist der Zeitraum.
-
-Full:
-- 730 Tage Training
+- 730 Tage Training / Optimierung
 - 365 Tage Blindtest
+- ein gemeinsamer Kapital-/Zeitkontext
+- ein gemeinsamer Router
+- Ergebnisberichte mit bester/schlechtester Tag, bester/schlechtester Monat, Drawdown, Trades und positiven/negativen Tagen
 
-Smoke:
-- 1 Tag Blindtest = 2 Tage Training
-- 7 Tage Blindtest = 14 Tage Training
-- 14 Tage Blindtest = 28 Tage Training
-- 30 Tage Blindtest = 60 Tage Training
+Richtung Zielwert: 3 USDC pro Tag oder mehr im 365-Tage-Blindtest. Das ist ein Zielwert, keine Garantie.
 
-Smoke ist nur technische Kurzprüfung. Der eigentliche Entscheidungsmaßstab ist der 365-Tage-Blindtest.
+Eine Konfiguration darf erst nach gutem Blindtest und bewusster Nutzerentscheidung uebernommen werden. Danach laeuft sie fuer den kommenden Monat. Beim naechsten Monatslauf werden die Daten aktualisiert und erneut 3 Jahre betrachtet: 2 Jahre Training, 1 Jahr Blindtest.
 
-## Ein gemeinsames Konto
+## UI und Backtestpfad
 
-Ein Kandidatenpool darf mehrere Kandidaten enthalten.
+Smoke und Full muessen aus demselben UI-/Controller-Pfad laufen.
 
-Aber die Simulation darf Kandidaten nicht parallel addieren, als hätte jeder Kandidat sein eigenes Kapital.
+Smoke ist nur technische Kurzpruefung. Entscheidungsgrundlage ist der 365-Tage-Blindtest.
 
-Alle Kandidaten liefern Vorschläge. Der Router entscheidet im gemeinsamen Zeit-/Kapital-Kontext.
+Trading-Funktionen wie Paper, Testtrade und Live bleiben gesperrt, bis Backtest, Training, Router, Blindtest, Reports und bewusste Uebernahme korrekt sind.
 
-Ohne ausdrückliche Kapitalaufteilungsregel gilt: überlappende Vorschläge werden auf eine Aktion reduziert.
+## Aktueller Stand
 
-## Aktueller Stand vor nächstem Patch
+Aktiv:
 
-Der aktuelle V6-Pool hat den richtigen Gedanken, aber die Ausführung muss korrigiert werden:
-- Pool ja.
-- Paralleles Addieren aller Kandidaten nein.
-- Nächster Patch: pool_overlap_guard / one_position_at_a_time.
+- Pool-Overlap-Guard / one_position_at_a_time.
+- Derived Timeframes 5m bis 1d sind lookahead-sicher erzeugt und diagnostisch am Router sichtbar.
+- HTF Training Edge Diagnostics schreiben Gewinner-/Verlierer-Trennung in den Router-Report.
+- Zentraler Daten-Ensure laeuft vor Smoke und Full.
+- ETHUSDC, BTCUSDC, ETHBTC, ETHUSDT, USDCUSDT, Kline-Orderflow-Felder, exchange_info und ETHUSDC aggTrade-Minutenfeatures werden vorbereitet.
+- Live Spread/Depth wird lokal gesammelt und ist erst nach mindestens 30 echten Tagen validierter Abdeckung als Backtestquelle bewertbar.
+
+Noch nicht als Handelsentscheidung aktiv:
+
+- ETHUSDT/USDCUSDT-Kontext
+- aggTrade-/Orderflow-Features
+- Spread/Depth/Orderbuch
+- HTF-Metriken als Gate/Score
+
+Neue Daten duerfen erst in Gates/Scores, wenn Training-only Analyse zeigt, dass sie Gewinner von Verlierern trennen.
 
 ## Arbeitsweise
 
-Vor Codeänderungen immer zuerst specs/ und docs/ lesen.
+Vor Codeaenderungen zuerst `docs/CURRENT_TRUTH_MAP.md` lesen.
 
-Keine großen Daten-/Report-Ordner blind laden.
+Keine grossen Daten-/Report-Ordner blind laden oder committen.
 
-Jede Änderung muss Tests haben.
+Nach jeder Codeaenderung:
 
-Nach jeder Änderung:
-- compileall
-- pytest
+- `python -m compileall src tests`
+- `python -m pytest -q`
 - kurzer Ergebnisbericht
