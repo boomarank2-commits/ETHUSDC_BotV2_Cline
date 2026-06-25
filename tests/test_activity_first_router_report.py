@@ -94,6 +94,7 @@ def test_activity_first_router_report_contains_diagnostics_even_without_target()
     report = build_activity_first_router_report("run_test_activity_diagnostics", _split())
 
     rejection_counts = report.rejection_summary["rejection_counts"]
+    htf_analysis = report.rejection_summary["derived_timeframe_training_edge_analysis"]
 
     assert "best_activity_candidate" in report.rejection_summary
     assert "best_edge_candidate" in report.rejection_summary
@@ -109,6 +110,11 @@ def test_activity_first_router_report_contains_diagnostics_even_without_target()
     assert report.router_artifact["derived_timeframe_usage_mode"] == (
         "candidate_entry_diagnostics_only_no_gate_or_score_change"
     )
+    assert report.router_artifact["derived_timeframe_training_edge_analysis_available"] is True
+    assert htf_analysis["scope"] == "training_only_candidate_entries"
+    assert htf_analysis["changes_trade_gates_or_scores"] is False
+    assert "5m" in htf_analysis["timeframes"]
+    assert "close_return" in htf_analysis["timeframes"]["5m"]
     assert report.best_activity_candidate["derived_timeframe_features"][
         "changes_trade_gates_or_scores"
     ] is False
