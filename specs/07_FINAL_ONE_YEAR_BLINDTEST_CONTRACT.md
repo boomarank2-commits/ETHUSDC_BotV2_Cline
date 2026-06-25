@@ -33,6 +33,29 @@ Adaptiv bedeutet:
 - Der Blindtest wählt setup oder no_trade.
 - Der Blindtest lernt nicht aus seinem eigenen Ergebnis.
 
+## Datenbasis
+
+Der Backtest darf langfristig nicht nur auf rohe 1m-Kerzen reduziert werden.
+
+Zulaessig, wenn sauber validiert und lookahead-sicher:
+
+- ETHUSDC 1m-Kerzen
+- daraus abgeleitete Timeframes: 5m, 15m, 30m, 1h, 4h, 1d
+- ETHUSDC trades
+- ETHUSDC aggTrades
+- exchange_info
+- Binance-Regeln
+- Gebührenmodell
+- Slippage-Modell
+- BTCUSDC als Marktkontext, falls valide
+- ETHBTC als relative ETH-Stärke, falls valide
+- bookTicker, falls live gesammelt und validiert
+- Orderbuchdaten / Snapshots, falls live gesammelt und validiert
+
+BookTicker und Orderbuchdaten dürfen erst genutzt werden, wenn sie historisch für den jeweiligen Zeitpunkt wirklich vorhanden waren. Als praktische Mindestbasis gelten mindestens 30 Tage sauber gesammelte, lückenarme und zeit-sichere Live-Daten.
+
+Ziel der zusätzlichen Daten ist bessere Situationserkennung, nicht künstlich bessere Reports.
+
 ## Pool-Regel
 
 Ein Pool aus mehreren Kandidaten ist erlaubt.
