@@ -8,6 +8,7 @@ from typing import Any, Callable
 from src.common.config import CONFIG
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
 from src.data.candle_schema import Candle
+from src.data.derived_timeframes import DerivedTimeframeFeatureSeries
 from src.data.exchange_info import ExchangeInfoFilters, load_exchange_info_filters, round_price_to_tick, round_quantity_to_step
 from src.data.train_blind_split import TrainBlindSplit
 
@@ -31,6 +32,13 @@ class ActivityFirstCandidate:
     cooldown_candles: int
     stake_quote_amount: float
     search_pass: str = "activity_first"
+    htf_filter_timeframe: str | None = None
+    htf_filter_metric: str | None = None
+    htf_filter_min_value: float | None = None
+    htf_filter_training_winner_average: float | None = None
+    htf_filter_training_loser_average: float | None = None
+    htf_filter_training_winner_pass_rate: float | None = None
+    htf_filter_training_loser_pass_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +78,7 @@ class ActivityFirstSimulationResult:
     no_trade_count: int
     blocked_signal_count: int
     trades: list[ActivityFirstTrade]
+    feature_filtered_signal_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -514,9 +523,37 @@ def _quantity_for_entry(candidate: ActivityFirstCandidate, entry_price: float, f
     return quantity if quantity > 0 else None
 
 
-def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCandidate, start_capital_reference: float, filters: ExchangeInfoFilters | None, market: _MarketMetrics | None = None) -> ActivityFirstSimulationResult:
+def _htf_filter_allows_entry(
+    candidate: ActivityFirstCandidate,
+    index: int,
+    htf_feature_series: dict[str, DerivedTimeframeFeatureSeries] | None,
+) -> bool:
+    if candidate.htf_filter_timeframe is None:
+        return True
+    if (
+        candidate.htf_filter_metric is None
+        or candidate.htf_filter_min_value is None
+        or htf_feature_series is None
+    ):
+        return False
+    series = htf_feature_series.get(candidate.htf_filter_timeframe)
+    if series is None:
+        return False
+    value = series.value_at(candidate.htf_filter_metric, index)
+    return value is not None and value >= candidate.htf_filter_min_value
+
+
+def _run_candidate_on_candles(
+    candles: list[Candle],
+    candidate: ActivityFirstCandidate,
+    start_capital_reference: float,
+    filters: ExchangeInfoFilters | None,
+    market: _MarketMetrics | None = None,
+    htf_feature_series: dict[str, DerivedTimeframeFeatureSeries] | None = None,
+) -> ActivityFirstSimulationResult:
     trades: list[ActivityFirstTrade] = []
     signal_count = no_trade_count = blocked_signal_count = 0
+    feature_filtered_signal_count = 0
     cumulative_net = cumulative_gross = cumulative_fees = 0.0
     peak_reference = start_capital_reference
     max_drawdown = 0.0
@@ -528,6 +565,10 @@ def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCan
             index += 1
             continue
         signal_count += 1
+        if not _htf_filter_allows_entry(candidate, index, htf_feature_series):
+            feature_filtered_signal_count += 1
+            index += 1
+            continue
         entry = candles[index]
         tick = filters.price_tick_size if filters else None
         entry_price = round_price_to_tick(entry.close, tick)
@@ -585,6 +626,7 @@ def _run_candidate_on_candles(candles: list[Candle], candidate: ActivityFirstCan
         no_trade_count,
         blocked_signal_count,
         trades,
+        feature_filtered_signal_count,
     )
 
 
@@ -691,6 +733,7 @@ def _candidate_summary(evaluation: _TrainingEvaluation) -> dict[str, Any]:
         "training_trade_count": r.trade_count,
         "training_signal_count": r.signal_count,
         "training_blocked_signal_count": r.blocked_signal_count,
+        "training_feature_filtered_signal_count": r.feature_filtered_signal_count,
         "training_gross_pnl": r.total_gross_pnl,
         "training_fees": r.total_fees,
         "training_net_pnl": r.total_net_pnl,
@@ -706,6 +749,23 @@ def _candidate_summary(evaluation: _TrainingEvaluation) -> dict[str, Any]:
         "max_hold": c.max_hold_candles,
         "trailing_stop": None,
         "context_filters": [c.search_pass] if c.search_pass.startswith("eth_") else [],
+        "htf_filter": (
+            {
+                "source": "derived_timeframes",
+                "timeframe": c.htf_filter_timeframe,
+                "metric": c.htf_filter_metric,
+                "operator": ">=",
+                "threshold": c.htf_filter_min_value,
+                "learned_from": "training_only",
+                "training_winner_average": c.htf_filter_training_winner_average,
+                "training_loser_average": c.htf_filter_training_loser_average,
+                "training_winner_pass_rate": c.htf_filter_training_winner_pass_rate,
+                "training_loser_pass_rate": c.htf_filter_training_loser_pass_rate,
+                "frozen_before_blindtest": True,
+            }
+            if c.htf_filter_timeframe is not None
+            else None
+        ),
         "rejection_reason": evaluation.rejection_reason,
         "distance_to_target": evaluation.target_distance,
         "balanced_score": evaluation.balanced_score,

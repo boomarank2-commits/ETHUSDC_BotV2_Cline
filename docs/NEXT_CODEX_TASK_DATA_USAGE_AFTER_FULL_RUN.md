@@ -2,6 +2,26 @@
 
 Stand: 2026-06-25
 
+## Status nach Part 2 – erster kleiner Schritt
+
+Implementiert:
+
+- HTF-Diagnostik bleibt vollständig sichtbar.
+- Positive ETH-Training-Kandidaten können genau einen 1h/4h/1d-Range-Filter
+  aus Training-Winner/Loser-Trennung lernen.
+- Der Filter erzeugt einen separaten Kandidaten und lockert keine bestehenden
+  Zulassungsgates.
+- Der Schwellenwert wird vor dem Blindtest eingefroren; kein Blindtest-Lernen.
+- Der Router-Report zeigt Quelle verfügbar/verwendet, gelernte Trennung,
+  zusätzliche `trade_allowed` Kandidaten, Candidate-Space vor/nach Filter,
+  Blindtest-Trades und Zielquote.
+
+Noch offen:
+
+- Ein neuer Full-Run muss zeigen, ob `trade_allowed_blocked` tatsächlich behoben
+  wird und ob Blindtest-Trades entstehen.
+- Kline-Orderflow, aggTrades und Kontextmärkte wurden noch nicht integriert.
+
 ## Context
 
 A full backtest has completed:

@@ -1,8 +1,12 @@
 """ETHUSDC router package patch layer."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
-from src.data.derived_timeframes import build_closed_timeframe_feature_snapshots
+from src.data.derived_timeframes import (
+    DerivedTimeframeFeatureSeries,
+    build_closed_timeframe_feature_series,
+    build_closed_timeframe_feature_snapshots,
+)
 
 from . import activity_first_router_report as _r
 
@@ -109,6 +113,180 @@ def _evaluate_training_candidates(candidates, candles, start_capital_reference, 
                 rejection,
                 _score(result),
                 distance,
+            )
+        )
+        _r._emit_router_progress(progress_callback, done, total)
+    return evaluations
+
+
+def _feature_values_for_candidate(evaluation, derived_features, timeframe):
+    winners = []
+    losers = []
+    for trade in evaluation.result.trades:
+        feature = derived_features.snapshots.get(trade.entry_time, {}).get(timeframe)
+        if feature is None or not isinstance(feature.get("range_pct"), int | float):
+            continue
+        value = float(feature["range_pct"])
+        if trade.net_pnl > 0:
+            winners.append(value)
+        elif trade.net_pnl < 0:
+            losers.append(value)
+    return winners, losers
+
+
+def _learn_htf_filter_candidates(evaluations, derived_features, htf_analysis):
+    """Learn at most one deterministic HTF range filter per positive ETH candidate."""
+    candidate_timeframes = [
+        timeframe
+        for timeframe in ("1h", "4h", "1d")
+        if timeframe in htf_analysis["candidate_timeframes_for_future_review"]
+    ]
+    learned_candidates = []
+    learned_rules = []
+    for evaluation in evaluations:
+        if evaluation.result.total_net_pnl <= 0 or not _is_eth(evaluation.result):
+            continue
+        best_rule = None
+        for timeframe in candidate_timeframes:
+            winners, losers = _feature_values_for_candidate(
+                evaluation,
+                derived_features,
+                timeframe,
+            )
+            if len(winners) < 20 or len(losers) < 20:
+                continue
+            winner_average = _average(winners)
+            loser_average = _average(losers)
+            if (
+                winner_average is None
+                or loser_average is None
+                or winner_average <= loser_average
+            ):
+                continue
+            threshold = (winner_average + loser_average) / 2.0
+            winner_pass_rate = sum(value >= threshold for value in winners) / len(winners)
+            loser_pass_rate = sum(value >= threshold for value in losers) / len(losers)
+            separation = winner_pass_rate - loser_pass_rate
+            if winner_pass_rate < 0.35 or separation < 0.05:
+                continue
+            rule = {
+                "base_candidate_id": evaluation.candidate.candidate_id,
+                "timeframe": timeframe,
+                "metric": "range_pct",
+                "operator": ">=",
+                "threshold": threshold,
+                "training_winner_sample_count": len(winners),
+                "training_loser_sample_count": len(losers),
+                "training_winner_average": winner_average,
+                "training_loser_average": loser_average,
+                "training_winner_pass_rate": winner_pass_rate,
+                "training_loser_pass_rate": loser_pass_rate,
+                "training_pass_rate_separation": separation,
+            }
+            if best_rule is None or (
+                rule["training_pass_rate_separation"],
+                rule["training_winner_sample_count"] + rule["training_loser_sample_count"],
+            ) > (
+                best_rule["training_pass_rate_separation"],
+                best_rule["training_winner_sample_count"]
+                + best_rule["training_loser_sample_count"],
+            ):
+                best_rule = rule
+        if best_rule is None:
+            continue
+        candidate = replace(
+            evaluation.candidate,
+            candidate_id=(
+                f"{evaluation.candidate.candidate_id}"
+                f"_htf_{best_rule['timeframe']}_range_filter"
+            ),
+            search_pass=f"{evaluation.candidate.search_pass}_htf_filter",
+            htf_filter_timeframe=str(best_rule["timeframe"]),
+            htf_filter_metric="range_pct",
+            htf_filter_min_value=float(best_rule["threshold"]),
+            htf_filter_training_winner_average=float(
+                best_rule["training_winner_average"]
+            ),
+            htf_filter_training_loser_average=float(
+                best_rule["training_loser_average"]
+            ),
+            htf_filter_training_winner_pass_rate=float(
+                best_rule["training_winner_pass_rate"]
+            ),
+            htf_filter_training_loser_pass_rate=float(
+                best_rule["training_loser_pass_rate"]
+            ),
+        )
+        learned_candidates.append(candidate)
+        learned_rules.append(
+            {
+                **best_rule,
+                "candidate_id": candidate.candidate_id,
+                "learned_from": "training_only",
+                "frozen_before_blindtest": True,
+                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+            }
+        )
+    return learned_candidates, learned_rules
+
+
+def _feature_series_cache(candles, candidates, warmup_candles=None):
+    timeframes = sorted(
+        {
+            candidate.htf_filter_timeframe
+            for candidate in candidates
+            if candidate.htf_filter_timeframe is not None
+        }
+    )
+    if not timeframes:
+        return {}
+    warmup = list(warmup_candles or [])
+    combined = warmup + list(candles)
+    offset = len(warmup)
+    result = {}
+    for timeframe in timeframes:
+        series = build_closed_timeframe_feature_series(combined, timeframe)
+        result[timeframe] = DerivedTimeframeFeatureSeries(
+            timeframe=timeframe,
+            close_return=series.close_return[offset:],
+            range_pct=series.range_pct[offset:],
+            volume=series.volume[offset:],
+        )
+    return result
+
+
+def _evaluate_htf_filter_candidates(
+    candidates,
+    candles,
+    start_capital_reference,
+    filters,
+    progress_callback=None,
+):
+    if not candidates:
+        return []
+    market = _r._MarketMetrics(candles)
+    feature_series = _feature_series_cache(candles, candidates)
+    evaluations = []
+    total = len(candidates)
+    for done, candidate in enumerate(candidates, start=1):
+        result = _r._run_candidate_on_candles(
+            candles,
+            candidate,
+            start_capital_reference,
+            filters,
+            market,
+            feature_series,
+        )
+        rejection = _candidate_rejection(result)
+        evaluations.append(
+            _r._TrainingEvaluation(
+                candidate,
+                result,
+                _r._activity_class(result.trades_per_day),
+                rejection is None,
+                rejection,
+                _score(result),
+                abs(_r.TARGET_QUOTE_PER_DAY - result.quote_per_day),
             )
         )
         _r._emit_router_progress(progress_callback, done, total)
@@ -275,14 +453,26 @@ def _candidate_summary(evaluation, derived_features):
     return summary
 
 
-def _aggregate_pool_result(candles, selected_pool, start_capital, filters):
+def _aggregate_pool_result(
+    candles,
+    selected_pool,
+    start_capital,
+    filters,
+    htf_warmup_candles=None,
+):
     if not selected_pool:
         return _r._empty_simulation_result(
             _r._diagnostic_placeholder_candidate(start_capital),
             start_capital,
         )
     market = _r._MarketMetrics(candles)
+    feature_series = _feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in selected_pool],
+        warmup_candles=htf_warmup_candles,
+    )
     proposals = []
+    pool_feature_filtered_signal_count = 0
     for evaluation in selected_pool:
         result = _r._run_candidate_on_candles(
             candles,
@@ -290,7 +480,9 @@ def _aggregate_pool_result(candles, selected_pool, start_capital, filters):
             start_capital,
             filters,
             market,
+            feature_series,
         )
+        pool_feature_filtered_signal_count += result.feature_filtered_signal_count
         for trade in result.trades:
             proposals.append(
                 (
@@ -353,6 +545,7 @@ def _aggregate_pool_result(candles, selected_pool, start_capital, filters):
         skipped,
         sum(evaluation.result.blocked_signal_count for evaluation in selected_pool),
         chosen,
+        pool_feature_filtered_signal_count,
     )
 
 
@@ -387,7 +580,10 @@ def _candidate_space_status(evaluations):
     if any(evaluation.trade_allowed for evaluation in evaluations):
         return "trade_allowed_found", "at least one active after-fee positive setup exists"
     if any(evaluation.result.total_net_pnl > 0 for evaluation in evaluations):
-        return "trade_allowed_blocked", "positive candidates exist but failed robustness/activity filters"
+        return (
+            "trade_allowed_blocked",
+            "positive candidates exist but failed activity/cost/risk gates",
+        )
     if any(evaluation.result.total_gross_pnl > 0 for evaluation in evaluations):
         return "edge_after_fees_failed", "gross-positive candidates exist, but fees removed the edge"
     if any(_activity_ok(evaluation.result) for evaluation in evaluations):
@@ -403,7 +599,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     start_capital = float(stake_quote_amount)
     filters = _r.load_exchange_info_filters()
     candidates = _r._generate_activity_first_candidates(stake_quote_amount, profile)
-    evaluations = _evaluate_training_candidates(
+    baseline_evaluations = _evaluate_training_candidates(
         candidates,
         split.training_candles,
         start_capital,
@@ -412,7 +608,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     )
     decision_open_times = {
         trade.entry_time
-        for evaluation in evaluations
+        for evaluation in baseline_evaluations
         for trade in evaluation.result.trades
     }
     derived_features = build_closed_timeframe_feature_snapshots(
@@ -427,6 +623,35 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         missing_timeframe_reason = "no candidate training entry had a closed higher-timeframe feature"
     else:
         missing_timeframe_reason = None
+    baseline_htf_analysis = _htf_training_edge_analysis(
+        baseline_evaluations,
+        derived_features,
+    )
+    htf_candidates, learned_htf_rules = _learn_htf_filter_candidates(
+        baseline_evaluations,
+        derived_features,
+        baseline_htf_analysis,
+    )
+    htf_evaluations = _evaluate_htf_filter_candidates(
+        htf_candidates,
+        split.training_candles,
+        start_capital,
+        filters,
+        progress_callback,
+    )
+    evaluations = baseline_evaluations + htf_evaluations
+    all_candidate_ids = {candidate.candidate_id for candidate in candidates}
+    all_candidate_ids.update(candidate.candidate_id for candidate in htf_candidates)
+    decision_open_times.update(
+        trade.entry_time
+        for evaluation in htf_evaluations
+        for trade in evaluation.result.trades
+    )
+    if htf_evaluations:
+        derived_features = build_closed_timeframe_feature_snapshots(
+            split.training_candles,
+            decision_open_times,
+        )
     allowed = [evaluation for evaluation in evaluations if evaluation.trade_allowed]
     selected_pool = _select_candidate_pool(evaluations)
     best_activity = max(evaluations, key=lambda evaluation: evaluation.result.trades_per_day, default=None)
@@ -442,6 +667,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             selected_pool,
             start_capital,
             filters,
+            htf_warmup_candles=split.training_candles[-2880:],
         )
         selected_setups = [
             _candidate_summary(evaluation, derived_features)
@@ -474,7 +700,49 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
                 "detail": "ETHUSDC-Regime-Diagnose wird erstellt",
             }
         )
-    htf_training_edge_analysis = _htf_training_edge_analysis(evaluations, derived_features)
+    htf_training_edge_analysis = baseline_htf_analysis
+    baseline_status, baseline_reason = _candidate_space_status(baseline_evaluations)
+    filtered_allowed_count = sum(
+        evaluation.trade_allowed for evaluation in htf_evaluations
+    )
+    htf_filter_integration = {
+        "source": "derived_timeframes",
+        "source_available": derived_timeframes_available,
+        "source_used": bool(htf_candidates),
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if htf_candidates
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "training_only_winner_loser_separation": True,
+        "changes_score": False,
+        "changes_entry_filter": bool(htf_candidates),
+        "changes_trade_gates": False,
+        "blindtest_learning": False,
+        "baseline_candidate_count": len(baseline_evaluations),
+        "generated_filter_candidate_count": len(htf_candidates),
+        "evaluated_filter_candidate_count": len(htf_evaluations),
+        "baseline_trade_allowed_count": sum(
+            evaluation.trade_allowed for evaluation in baseline_evaluations
+        ),
+        "filter_trade_allowed_count": filtered_allowed_count,
+        "additional_trade_allowed_count": filtered_allowed_count,
+        "candidate_space_before": baseline_status,
+        "candidate_space_before_reason": baseline_reason,
+        "candidate_space_after": status,
+        "trade_allowed_blocked_resolved": (
+            baseline_status == "trade_allowed_blocked" and bool(allowed)
+        ),
+        "learned_rules": learned_htf_rules,
+        "selected_filter_candidate_count": sum(
+            evaluation.candidate.htf_filter_timeframe is not None
+            for evaluation in selected_pool
+        ),
+        "blindtest_trade_count": selected_result.trade_count,
+        "blindtest_quote_per_day": selected_result.quote_per_day,
+        "target_quote_per_day": _r.TARGET_QUOTE_PER_DAY,
+        "target_ratio": target_ratio,
+    }
     rejection_summary = {
         "router_name": "activity_first_router",
         "candidate_space_status": status,
@@ -487,8 +755,13 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "used_timeframes": derived_features.used_timeframes,
         "missing_timeframe_reason": missing_timeframe_reason,
         "derived_timeframe_closed_candle_counts": derived_features.closed_candle_counts,
-        "derived_timeframe_usage_mode": "candidate_entry_diagnostics_only_no_gate_or_score_change",
+        "derived_timeframe_usage_mode": (
+            "training_only_frozen_entry_filter_plus_diagnostics"
+            if htf_candidates
+            else "candidate_entry_diagnostics_only_no_gate_or_score_change"
+        ),
         "derived_timeframe_training_edge_analysis": htf_training_edge_analysis,
+        "htf_filter_integration": htf_filter_integration,
         "best_activity_candidate": _candidate_summary(best_activity, derived_features) if best_activity else None,
         "best_edge_candidate": _candidate_summary(best_edge, derived_features) if best_edge else None,
         "best_balanced_candidate": _candidate_summary(best_balanced, derived_features) if best_balanced else None,
@@ -516,7 +789,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "selection_policy": "training_top_n_pool_one_shared_account_context",
         "selection_reason": selection_reason,
         "exchange_info_filters_used": filters is not None,
-        "candidate_generation_version": "activity_first_v6_multi_candidate_pool",
+        "candidate_generation_version": "activity_first_v7_htf_training_filter",
         "eth_specific_strategy_scope": True,
         "historical_news_labels_used": False,
         "historical_orderbook_used": False,
@@ -534,8 +807,14 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "derived_timeframes_used_by_router": derived_timeframes_used_by_router,
         "used_timeframes": derived_features.used_timeframes,
         "missing_timeframe_reason": missing_timeframe_reason,
-        "derived_timeframe_usage_mode": "candidate_entry_diagnostics_only_no_gate_or_score_change",
+        "derived_timeframe_usage_mode": (
+            "training_only_frozen_entry_filter_plus_diagnostics"
+            if htf_candidates
+            else "candidate_entry_diagnostics_only_no_gate_or_score_change"
+        ),
         "derived_timeframe_training_edge_analysis_available": bool(derived_features.used_timeframes),
+        "derived_timeframes_used_for_trade_decision": bool(htf_candidates),
+        "htf_filter_integration": htf_filter_integration,
     }
     return _r.ActivityFirstRouterReport(
         run_id,
@@ -551,7 +830,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         split.blindtest_end,
         status,
         reason,
-        len(candidates),
+        len(all_candidate_ids),
         len(evaluations),
         len(allowed),
         len(selected_pool),

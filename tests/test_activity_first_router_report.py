@@ -1,5 +1,17 @@
+import src.router.activity_first_router_report as router_report_module
+from src.data.derived_timeframes import (
+    DerivedTimeframeFeatureBuildResult,
+    build_closed_timeframe_feature_series,
+)
 from src.data.candle_schema import Candle
 from src.data.train_blind_split import TrainBlindSplit
+from src.router import _learn_htf_filter_candidates
+from src.router.activity_first_router_report import (
+    ActivityFirstCandidate,
+    ActivityFirstSimulationResult,
+    ActivityFirstTrade,
+    _TrainingEvaluation,
+)
 from src.router.activity_first_router_report import build_activity_first_router_report
 
 
@@ -113,6 +125,9 @@ def test_activity_first_router_report_contains_diagnostics_even_without_target()
     assert report.router_artifact["derived_timeframe_training_edge_analysis_available"] is True
     assert htf_analysis["scope"] == "training_only_candidate_entries"
     assert htf_analysis["changes_trade_gates_or_scores"] is False
+    assert report.rejection_summary["htf_filter_integration"][
+        "blindtest_learning"
+    ] is False
     assert "5m" in htf_analysis["timeframes"]
     assert "close_return" in htf_analysis["timeframes"]["5m"]
     assert report.best_activity_candidate["derived_timeframe_features"][
@@ -127,7 +142,9 @@ def test_eth_specific_regime_diagnostics_are_reported() -> None:
     pass_names = {row["pass_name"] for row in report.rejection_summary["search_pass_summary"]}
 
     assert report.router_artifact["eth_specific_strategy_scope"] is True
-    assert report.router_artifact["candidate_generation_version"] == "activity_first_v6_multi_candidate_pool"
+    assert report.router_artifact["candidate_generation_version"] == (
+        "activity_first_v7_htf_training_filter"
+    )
     assert "eth_regime_discovery" in pass_names
     assert diagnostics["scope"] == "ETHUSDC-only training diagnostics"
     assert diagnostics["trigger_forward_return_diagnostics"]
@@ -151,3 +168,143 @@ def test_no_trade_allowed_candidate_is_diagnostic_only() -> None:
     assert report.router_artifact["missing_timeframe_reason"] == (
         "no candidate training entry had a closed higher-timeframe feature"
     )
+
+
+def test_training_only_htf_filter_rule_is_learned_from_candidate_winners() -> None:
+    candidate = ActivityFirstCandidate(
+        "eth_candidate",
+        "eth_continuation_after_impulse_entry",
+        5,
+        0.01,
+        0.02,
+        0.01,
+        30,
+        1,
+        100.0,
+        "eth_regime_discovery",
+    )
+    trades = []
+    snapshots = {}
+    for index in range(50):
+        entry_time = f"2026-01-01T00:{index:02d}:00Z"
+        is_winner = index < 25
+        trades.append(
+            ActivityFirstTrade(
+                entry_time,
+                entry_time,
+                100.0,
+                101.0 if is_winner else 99.5,
+                100.0,
+                1.0,
+                1.0 if is_winner else -0.5,
+                0.0,
+                1.0 if is_winner else -0.5,
+                1.0 if is_winner else -0.5,
+                "test",
+                candidate.family,
+                candidate.candidate_id,
+            )
+        )
+        snapshots[entry_time] = {
+            "1h": {
+                "range_pct": 0.03 if is_winner else 0.01,
+                "close_return": 0.0,
+                "volume": 1.0,
+            }
+        }
+    simulation = ActivityFirstSimulationResult(
+        candidate,
+        100.0,
+        112.5,
+        12.5,
+        0.0,
+        12.5,
+        0.1,
+        50,
+        0.5,
+        25,
+        25,
+        0,
+        2.0,
+        50,
+        0,
+        0,
+        trades,
+    )
+    evaluation = _TrainingEvaluation(
+        candidate,
+        simulation,
+        "low_activity",
+        False,
+        "rejected_by_fees",
+        0.0,
+        2.9,
+    )
+    derived = DerivedTimeframeFeatureBuildResult(
+        snapshots=snapshots,
+        closed_candle_counts={"1h": 1},
+        available_timeframes=["1h"],
+        used_timeframes=["1h"],
+    )
+
+    learned, rules = _learn_htf_filter_candidates(
+        [evaluation],
+        derived,
+        {"candidate_timeframes_for_future_review": ["1h"]},
+    )
+
+    assert len(learned) == 1
+    assert learned[0].htf_filter_timeframe == "1h"
+    assert learned[0].htf_filter_metric == "range_pct"
+    assert learned[0].htf_filter_min_value == 0.02
+    assert rules[0]["training_winner_pass_rate"] == 1.0
+    assert rules[0]["training_loser_pass_rate"] == 0.0
+    assert rules[0]["frozen_before_blindtest"] is True
+
+
+def test_frozen_htf_filter_uses_only_feature_available_at_entry(
+    monkeypatch,
+) -> None:
+    candles = [_candle(index) for index in range(11)]
+    series = build_closed_timeframe_feature_series(candles, "5m")
+    candidate = ActivityFirstCandidate(
+        "eth_candidate_htf",
+        "eth_continuation_after_impulse_entry",
+        2,
+        0.0,
+        0.01,
+        0.01,
+        5,
+        0,
+        100.0,
+        "eth_regime_discovery_htf_filter",
+        htf_filter_timeframe="5m",
+        htf_filter_metric="range_pct",
+        htf_filter_min_value=0.0,
+    )
+    monkeypatch.setattr(
+        router_report_module,
+        "_entry_signal",
+        lambda candles, index, candidate, market=None: True,
+    )
+    monkeypatch.setattr(
+        router_report_module,
+        "_exit_trade",
+        lambda candles, index, candidate, filters: (
+            min(index + 1, len(candles) - 1),
+            "test",
+            candles[min(index + 1, len(candles) - 1)].close,
+        ),
+    )
+
+    result = router_report_module._run_candidate_on_candles(
+        candles,
+        candidate,
+        100.0,
+        None,
+        htf_feature_series={"5m": series},
+    )
+
+    assert result.feature_filtered_signal_count == 3
+    assert result.trades
+    assert result.trades[0].entry_time == candles[5].open_time

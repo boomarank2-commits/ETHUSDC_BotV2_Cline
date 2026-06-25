@@ -1334,3 +1334,25 @@ Next:
   Gigabyte und längere Zeit benötigen.
 - Danach training-only Nutzen der neuen Quellen einzeln prüfen und erst nach
   Beleg als Router-Feature anschließen.
+
+## 2026-06-25 - Part 2 erster HTF-Filterkandidat
+
+Changed:
+- Kompakte lookahead-sichere HTF-Feature-Serie je 1m-Entscheidungszeit ergänzt.
+- Positive ETH-Training-Kandidaten lernen höchstens einen 1h/4h/1d
+  `range_pct`-Filter aus ihrer eigenen Winner-/Loser-Trennung.
+- Filter wird als separater Kandidat im Training neu simuliert.
+- Blindtest verwendet nur den eingefrorenen Trainingsschwellenwert.
+- Keine bestehenden Gates gelockert; kein Blindtest-Lernen.
+- Router-Report erweitert um HTF-Quellenutzung, Regeln, zusätzliche
+  `trade_allowed` Kandidaten, Candidate-Space vor/nach Filter und Blindtestwirkung.
+- Candidate-Space-Diagnosetext für Cost/Risk präzisiert.
+
+Tests:
+- `python -m compileall src tests` green.
+- `python -m pytest -q` green.
+
+Next:
+- Sichtbaren Full-Backtest 730/365 über die UI starten.
+- Danach prüfen, ob ein HTF-Filterkandidat dieselben Gates besteht und im
+  eingefrorenen Blindtest echte Trades erzeugt.

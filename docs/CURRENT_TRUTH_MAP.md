@@ -96,7 +96,9 @@ Aktueller Status:
 
 - ETHUSDC 1m OHLCV: verwendet.
 - Binance exchange_info/Filter: verwendet.
-- ETHUSDC derived 5m/15m/30m/1h/4h/1d: diagnostisch verwendet, noch nicht als Gate/Score.
+- ETHUSDC derived 5m/15m/30m/1h/4h/1d: diagnostisch verwendet; positive
+  ETH-Training-Kandidaten dürfen zusätzlich genau einen training-only gelernten,
+  vor dem Blindtest eingefrorenen HTF-Range-Filter als neuen Kandidaten testen.
 - BTCUSDC/ETHBTC/ETHUSDT/USDCUSDT: Datenbereitstellung vorbereitet; harte Router-Nutzung muss separat belegt werden.
 - Vollstaendige Kline-Felder wie Quote-Volumen, Trade Count, Taker-Buy: Datenbasis vorbereitet; harte Router-Nutzung muss separat belegt werden.
 - ETHUSDC aggTrade-Minutenfeatures: Datenbasis vorbereitet; harte Router-Nutzung muss separat belegt werden.
@@ -122,13 +124,19 @@ Erledigt:
 - Derived Timeframes 5m/15m/30m/1h/4h/1d werden aus 1m-Candles lookahead-sicher erzeugt.
 - Derived Timeframes sind diagnostisch am Router angebunden.
 - HTF Training Edge Diagnostics sind im Router-Report vorbereitet: Gewinner/Verlierer im Training werden je Timeframe/Metrik verglichen.
+- HTF Part 2 ist minimal angeschlossen: Nur positive ETH-Training-Kandidaten
+  können aus 1h/4h/1d-Range-Trennung einen separaten Filterkandidaten erzeugen.
+  Der Filterkandidat wird im Training vollständig neu simuliert und muss dieselben
+  Kosten-/Profit-Factor-/Drawdown-/Aktivitätsgates bestehen. Im Blindtest bleibt
+  der gelernte Schwellenwert eingefroren.
 - Zentraler UI-Daten-Ensure ist eingebaut: Smoke und Full rufen denselben Datencheck vor der Pipeline auf.
 - ETHUSDC, BTCUSDC, ETHBTC, ETHUSDT, USDCUSDT, vollstaendige Kline-Felder, exchange_info und ETHUSDC aggTrade-Minutenfeatures werden als Datenbasis vorbereitet.
 - Live Spread/Depth Sammlung wird gestartet/geprueft, ist aber erst nach mindestens 30 echten Tagen validierter Abdeckung als Backtestquelle bewertbar.
 
 Nicht erledigt:
 
-- Neue Daten sind noch nicht aggressiv in Gates/Scores/Kandidatenauswahl eingebaut.
+- Außer dem kleinen eingefrorenen HTF-Filterkandidaten sind neue Daten noch nicht
+  in Gates/Scores/Kandidatenauswahl eingebaut.
 - ETHUSDT, USDCUSDT, aggTrades, Orderflow, Spread/Depth sind noch nicht als harte Handelsentscheidung validiert.
 - 365-Tage-Full-Blindtest ist noch nicht als Zielerreichung bestaetigt.
 - Kein Paper/Live/Testtrade als Trading-Freigabe.

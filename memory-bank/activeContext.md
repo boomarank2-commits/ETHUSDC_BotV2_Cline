@@ -9,6 +9,17 @@ Latest analyzed run:
 - Cause: old 12-trade/year setup was correctly blocked, but no replacement setup was found; 109/109 rows skipped in Full-Training precheck: 61 target-math, 48 activity.
 
 Current patch:
+- Part 2 minimal umgesetzt: Positive ETH-Training-Kandidaten können aus klarer
+  1h/4h/1d-Range-Winner/Loser-Trennung genau einen separaten HTF-Filterkandidaten
+  lernen. Schwelle training-only, im Blindtest eingefroren, kein Lookahead.
+- HTF-Filterkandidaten werden vollständig neu simuliert und müssen unverändert
+  Activity-, Fee/Gross-, Profit-Factor-, Drawdown- und Netto-Gates bestehen.
+- Router-Report zeigt Source available/used, gelernte Regeln, Candidate-Space
+  before/after, zusätzliche trade_allowed Kandidaten, Blindtest-Trades und Zielquote.
+- Diagnosefehler korrigiert: `trade_allowed_blocked` nennt jetzt
+  Activity/Cost/Risk statt fälschlich nur Robustness/Activity.
+- Noch kein neuer Full-Run nach diesem Patch; 0-Trades-Blocker ist daher noch
+  nicht als behoben bestätigt.
 - Gemeinsamer UI-Datenstart erweitert: Smoke 1/7/14/30 und Full rufen vor
   derselben Pipeline `ensure_all_backtest_market_data_ready(...)` auf.
 - Automatisch vorhanden/aktuell gehalten werden ETHUSDC, BTCUSDC, ETHBTC,

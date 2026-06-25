@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from src.data.candle_schema import Candle
 from src.data.derived_timeframes import (
+    build_closed_timeframe_feature_series,
     build_closed_timeframe_feature_snapshots,
     build_derived_timeframe_counts,
     derive_closed_timeframe_candles,
@@ -117,3 +118,13 @@ def test_feature_snapshot_does_not_use_incomplete_or_gapped_bucket() -> None:
     assert result.snapshots["2026-01-01T00:10:00"]["5m"]["source_open_time"] == (
         "2026-01-01T00:05:00"
     )
+
+
+def test_feature_series_uses_only_candles_closed_before_decision_time() -> None:
+    series = build_closed_timeframe_feature_series(_minute_candles(11), "5m")
+
+    assert series.value_at("range_pct", 4) is None
+    assert series.value_at("range_pct", 5) == (106.0 - 99.0) / 104.5
+    assert series.value_at("close_return", 5) is None
+    assert series.value_at("close_return", 10) == 109.5 / 104.5 - 1.0
+    assert series.value_at("volume", 5) == 15.0

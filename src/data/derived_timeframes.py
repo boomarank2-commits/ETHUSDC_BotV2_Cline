@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from array import array
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -26,6 +28,24 @@ class DerivedTimeframeFeatureBuildResult:
     closed_candle_counts: dict[str, int]
     available_timeframes: list[str]
     used_timeframes: list[str]
+
+
+@dataclass(frozen=True)
+class DerivedTimeframeFeatureSeries:
+    """Compact latest-closed HTF values aligned to every source 1m candle."""
+
+    timeframe: str
+    close_return: array
+    range_pct: array
+    volume: array
+
+    def value_at(self, metric: str, index: int) -> float | None:
+        values = getattr(self, metric, None)
+        if values is None:
+            msg = f"unsupported derived timeframe metric: {metric}"
+            raise ValueError(msg)
+        value = float(values[index])
+        return None if math.isnan(value) else value
 
 
 @dataclass
@@ -228,6 +248,61 @@ def build_closed_timeframe_feature_snapshots(
         closed_candle_counts=closed_counts,
         available_timeframes=available_timeframes,
         used_timeframes=used_timeframes,
+    )
+
+
+def build_closed_timeframe_feature_series(
+    candles_1m: list[Candle],
+    timeframe: str,
+) -> DerivedTimeframeFeatureSeries:
+    """Align the latest fully closed HTF candle to each historical 1m decision.
+
+    Values are captured before the current 1m candle enters its HTF bucket. A
+    filter at 00:05 can therefore use the completed 00:00-00:04 5m candle, but
+    never the still-open 00:05-00:09 candle.
+    """
+    if timeframe not in DERIVED_TIMEFRAME_MINUTES:
+        msg = f"unsupported derived timeframe: {timeframe}"
+        raise ValueError(msg)
+    timeframe_minutes = DERIVED_TIMEFRAME_MINUTES[timeframe]
+    state = _TimeframeAggregationState()
+    close_returns = array("d")
+    range_values = array("d")
+    volumes = array("d")
+
+    for candle in candles_1m:
+        open_time = _parse_open_time(candle.open_time)
+        current_bucket = _bucket_start(open_time, timeframe_minutes)
+        if state.bucket_start is None:
+            state.bucket_start = current_bucket
+        elif current_bucket != state.bucket_start:
+            _finalize_state(state, timeframe_minutes)
+            state.bucket_start = current_bucket
+            state.rows = []
+
+        feature = _feature_snapshot(state, timeframe_minutes)
+        close_returns.append(
+            float(feature["close_return"])
+            if feature is not None and feature["close_return"] is not None
+            else math.nan
+        )
+        range_values.append(
+            float(feature["range_pct"])
+            if feature is not None and feature["range_pct"] is not None
+            else math.nan
+        )
+        volumes.append(
+            float(feature["volume"])
+            if feature is not None and feature["volume"] is not None
+            else math.nan
+        )
+        state.rows.append((open_time, candle))
+
+    return DerivedTimeframeFeatureSeries(
+        timeframe=timeframe,
+        close_return=close_returns,
+        range_pct=range_values,
+        volume=volumes,
     )
 
 

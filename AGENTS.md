@@ -78,7 +78,10 @@ Trading-Funktionen wie Paper, Testtrade und Live bleiben gesperrt, bis Backtest,
 Aktiv:
 
 - Pool-Overlap-Guard / one_position_at_a_time.
-- Derived Timeframes 5m bis 1d sind lookahead-sicher erzeugt und diagnostisch am Router sichtbar.
+- Derived Timeframes 5m bis 1d sind lookahead-sicher erzeugt und diagnostisch
+  sichtbar. Positive ETH-Training-Kandidaten dürfen zusätzlich einen kleinen
+  training-only gelernten, vor Blindtest eingefrorenen HTF-Range-Filterkandidaten
+  testen; alle bestehenden Zulassungsgates bleiben aktiv.
 - HTF Training Edge Diagnostics schreiben Gewinner-/Verlierer-Trennung in den Router-Report.
 - Zentraler Daten-Ensure laeuft vor Smoke und Full.
 - ETHUSDC, BTCUSDC, ETHBTC, ETHUSDT, USDCUSDT, Kline-Orderflow-Felder, exchange_info und ETHUSDC aggTrade-Minutenfeatures werden vorbereitet.
@@ -89,7 +92,8 @@ Noch nicht als Handelsentscheidung aktiv:
 - ETHUSDT/USDCUSDT-Kontext
 - aggTrade-/Orderflow-Features
 - Spread/Depth/Orderbuch
-- HTF-Metriken als Gate/Score
+- weitere HTF-Metriken oder HTF-Score-Ausweitung außerhalb des kleinen
+  eingefrorenen Range-Filterkandidaten
 
 Neue Daten duerfen erst in Gates/Scores, wenn Training-only Analyse zeigt, dass sie Gewinner von Verlierern trennen.
 
