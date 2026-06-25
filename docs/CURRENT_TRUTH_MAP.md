@@ -138,11 +138,19 @@ Nicht erledigt:
 Diese Dateien duerfen gelesen werden, aber nicht als alleinige operative Wahrheit gelten:
 
 - `.clinerules/*`: historischer Arbeitsrahmen; bei Widerspruch gilt diese Truth Map.
-- `docs/UI_TRUTH.md`: aeltere UI-Phase. UI/Controller fuer Smoke/Full ist inzwischen Teil der Wahrheit; Trading-Buttons bleiben aber gesperrt.
-- `docs/BACKTEST_ROUTER_CONTRACT.md`: enthaelt aeltere V6-/Pool-Sprache. Gueltig ist nur, was mit activity_first_router, shared account context und Pool-Overlap-Guard vereinbar ist.
-- `docs/IMPLEMENTATION_PLAN.md`: nur grober Plan; nicht als naechster konkreter Auftrag verwenden, wenn Memory/Truth Map neuer sind.
-- `memory-bank/openQuestions.md`: teilweise erledigte Fragen; aktuelle Entscheidungen stehen in Truth/Specs/Memory.
-- `memory-bank/techContext.md`: kann technisch alt sein; aktuelle technische Wahrheit steht in Code, Tests, README und dieser Map.
+- `memory-bank/activeContext.md`: enthaelt viel Verlauf und alte Runs; fuer aktuelle Kurzfassung gilt diese Truth Map.
+- `memory-bank/progress.md`: append-only Verlauf; fuer aktuelle Prioritaet gilt diese Truth Map.
+
+Bereinigt oder reduziert:
+
+- `AGENTS.md` wurde auf die aktuelle Read-Order und Zielwahrheit aktualisiert.
+- `docs/UI_TRUTH.md` wurde auf die aktuelle Backtest-UI-Phase aktualisiert.
+- `docs/IMPLEMENTATION_PLAN.md` wurde auf den aktuellen Daten-/Feature-/Router-Plan aktualisiert.
+- `memory-bank/techContext.md` wurde auf den aktuellen technischen Stand aktualisiert.
+- `memory-bank/openQuestions.md` wurde auf nicht-blockierende Reportfragen reduziert.
+- `.clinerules/02-no-assumptions.md` wurde auf diese Truth Map als erste Wahrheit reduziert.
+- `.clinerules/03-bot-truth.md` wurde auf diese Truth Map als erste Wahrheit reduziert.
+- `docs/BACKTEST_ROUTER_CONTRACT.md` wurde entfernt, weil es als alte doppelte Router-Wahrheit missverstaendlich war.
 
 ## 8. Aktueller naechster sinnvoller Schritt
 
