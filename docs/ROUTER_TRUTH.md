@@ -4,6 +4,10 @@ This file contains only confirmed router truth.
 
 ## Target Chain
 
+Situation -> Cluster -> Router -> Setup -> Trade
+
+Extended current interpretation:
+
 Situation -> Cluster / Regime -> Router -> Setup or no_trade -> Trade
 
 ## Situations
