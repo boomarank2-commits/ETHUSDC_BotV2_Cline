@@ -67,7 +67,54 @@ Zielrichtung:
 
 Smoke 1/7/14/30 ist nur technische Kurzpruefung desselben Backtestpfads. Smoke ist keine finale Performance-Wahrheit.
 
-## 4. Aktueller technischer Stand
+## 4. Lokale Daten und GitHub-Regel
+
+Heruntergeladene Marktdaten sind keine GitHub-Code-Artefakte.
+
+Nicht zu GitHub pushen:
+
+- `data/`
+- grosse CSV-/ZIP-/DB-/Parquet-Dateien
+- lokale aggTrade-Partitionen
+- lokale Live-Microstructure-Snapshots
+- lokale Download-Zwischenstaende
+
+Nach GitHub gehoeren:
+
+- Code
+- Tests
+- Docs/Specs/Truth-Dateien
+- kleine Status-/Reportdateien nur dann, wenn sie bewusst zur Analyse gebraucht werden
+
+Grund: Die Daten koennen mehrere Gigabyte gross werden, sind reproduzierbar aus Binance/Live-Sammlung und wuerden das Repo unnoetig schwer machen. Die Wahrheit liegt im Code, in den Contracts und in den Ergebnisreports, nicht in rohen Marktdaten im Git.
+
+## 5. Daten-Nutzung im Backtest
+
+Download bedeutet nicht automatisch Handelsentscheidung.
+
+Aktueller Status:
+
+- ETHUSDC 1m OHLCV: verwendet.
+- Binance exchange_info/Filter: verwendet.
+- ETHUSDC derived 5m/15m/30m/1h/4h/1d: diagnostisch verwendet, noch nicht als Gate/Score.
+- BTCUSDC/ETHBTC/ETHUSDT/USDCUSDT: Datenbereitstellung vorbereitet; harte Router-Nutzung muss separat belegt werden.
+- Vollstaendige Kline-Felder wie Quote-Volumen, Trade Count, Taker-Buy: Datenbasis vorbereitet; harte Router-Nutzung muss separat belegt werden.
+- ETHUSDC aggTrade-Minutenfeatures: Datenbasis vorbereitet; harte Router-Nutzung muss separat belegt werden.
+- Spread/BookTicker/Top-20-Depth: wird live gesammelt; vor mindestens 30 echten Tagen validierter Abdeckung nicht als Backtestquelle verwenden.
+
+Ziel ist, heruntergeladene Daten schrittweise nutzbar zu machen. Jede Datenquelle muss diesen Weg gehen:
+
+1. lokal vorhanden
+2. freshness/Qualitaet geprueft
+3. im Data Overview als verfuegbar gemeldet
+4. lookahead-sicher als Feature ableitbar
+5. training-only Gewinner/Verlierer-Trennung zeigen
+6. erst danach als Score-/Gate-Kandidat erlaubt
+7. erst nach Blindtest-Bestaetigung als uebernehmbarer Strategiebaustein erlaubt
+
+Keine Datenquelle darf nur deshalb in den Handel eingreifen, weil sie heruntergeladen wurde.
+
+## 6. Aktueller technischer Stand
 
 Erledigt:
 
@@ -86,7 +133,7 @@ Nicht erledigt:
 - 365-Tage-Full-Blindtest ist noch nicht als Zielerreichung bestaetigt.
 - Kein Paper/Live/Testtrade als Trading-Freigabe.
 
-## 5. Dateien mit Archiv-/Altlast-Risiko
+## 7. Dateien mit Archiv-/Altlast-Risiko
 
 Diese Dateien duerfen gelesen werden, aber nicht als alleinige operative Wahrheit gelten:
 
@@ -97,7 +144,7 @@ Diese Dateien duerfen gelesen werden, aber nicht als alleinige operative Wahrhei
 - `memory-bank/openQuestions.md`: teilweise erledigte Fragen; aktuelle Entscheidungen stehen in Truth/Specs/Memory.
 - `memory-bank/techContext.md`: kann technisch alt sein; aktuelle technische Wahrheit steht in Code, Tests, README und dieser Map.
 
-## 6. Aktueller naechster sinnvoller Schritt
+## 8. Aktueller naechster sinnvoller Schritt
 
 Nach dem letzten Patch soll ein sichtbarer UI-/Controller-naher Lauf gestartet werden.
 
@@ -111,7 +158,7 @@ Zweck des naechsten Laufs:
 
 Wichtig: Der naechste Lauf ist noch kein Live-Faehigkeitsbeweis. Er kann lange dauern und mehrere Gigabyte herunterladen.
 
-## 7. Was danach zu analysieren ist
+## 9. Was danach zu analysieren ist
 
 Nach einem neuen Report muss geprueft werden:
 
@@ -125,7 +172,20 @@ Nach einem neuen Report muss geprueft werden:
 
 Erst wenn eine Metrik im Training sauber trennt, darf ein kleiner, expliziter Score-/Gate-Kandidat gebaut werden.
 
-## 8. Keine falschen naechsten Schritte
+## 10. Monatlicher Ziel-Workflow
+
+Wenn ein 365-Tage-Blindtest nach 730 Tagen Training einen uebernehmbaren Kandidaten zeigt:
+
+1. Nutzer prueft Kennzahlen: USDC/Tag, bester/schlechtester Tag, bester/schlechtester Monat, Drawdown, Tradezahl, positive/negative Tage.
+2. Nutzer uebernimmt die Strategie bewusst in der UI.
+3. Bot laeuft fuer den kommenden Monat mit dieser uebernommenen Konfiguration.
+4. Beim naechsten Monatslauf werden Daten aktualisiert und erneut die letzten 3 Jahre betrachtet.
+5. Wieder 2 Jahre Training/Optimierung und 1 Jahr Blindtest.
+6. Nur bei erneut ueberzeugendem Ergebnis wird der neue Kandidat uebernommen.
+
+Keine automatische Live-Uebernahme ohne Nutzerentscheidung.
+
+## 11. Keine falschen naechsten Schritte
 
 Nicht tun:
 
