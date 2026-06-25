@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 
 from src.data.candle_schema import Candle
-from src.data.derived_timeframes import build_derived_timeframe_counts, derive_closed_timeframe_candles
+from src.data.derived_timeframes import (
+    build_closed_timeframe_feature_snapshots,
+    build_derived_timeframe_counts,
+    derive_closed_timeframe_candles,
+)
 
 
 def _minute_candles(count: int, start: str = "2026-01-01T00:00:00") -> list[Candle]:
@@ -63,3 +67,41 @@ def test_derived_timeframe_counts_cover_required_timeframes_without_partial_buck
         "4h": 0,
         "1d": 0,
     }
+
+
+def test_feature_snapshot_uses_5m_candle_only_after_it_closed() -> None:
+    candles = _minute_candles(11)
+    result = build_closed_timeframe_feature_snapshots(
+        candles,
+        {
+            "2026-01-01T00:04:00",
+            "2026-01-01T00:05:00",
+            "2026-01-01T00:10:00",
+        },
+    )
+
+    assert "5m" not in result.snapshots["2026-01-01T00:04:00"]
+    first_available = result.snapshots["2026-01-01T00:05:00"]["5m"]
+    assert first_available["source_open_time"] == "2026-01-01T00:00:00"
+    assert first_available["available_at"] == "2026-01-01T00:05:00"
+    assert first_available["close_return"] is None
+    second_available = result.snapshots["2026-01-01T00:10:00"]["5m"]
+    assert second_available["source_open_time"] == "2026-01-01T00:05:00"
+    assert second_available["close_return"] == 109.5 / 104.5 - 1.0
+
+
+def test_feature_snapshot_does_not_use_incomplete_or_gapped_bucket() -> None:
+    candles = [
+        candle
+        for candle in _minute_candles(11)
+        if candle.open_time != "2026-01-01T00:03:00"
+    ]
+    result = build_closed_timeframe_feature_snapshots(
+        candles,
+        {"2026-01-01T00:05:00", "2026-01-01T00:10:00"},
+    )
+
+    assert "5m" not in result.snapshots["2026-01-01T00:05:00"]
+    assert result.snapshots["2026-01-01T00:10:00"]["5m"]["source_open_time"] == (
+        "2026-01-01T00:05:00"
+    )

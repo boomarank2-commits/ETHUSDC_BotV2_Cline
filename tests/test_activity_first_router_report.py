@@ -102,6 +102,16 @@ def test_activity_first_router_report_contains_diagnostics_even_without_target()
     assert "rejected_by_activity" in rejection_counts
     assert report.target_quote_per_day == 3.0
     assert report.router_artifact["legacy_cluster_router_used"] is False
+    assert report.router_artifact["derived_timeframes_available"] is True
+    assert report.router_artifact["derived_timeframes_used_by_router"] is True
+    assert "5m" in report.router_artifact["used_timeframes"]
+    assert report.router_artifact["missing_timeframe_reason"] is None
+    assert report.router_artifact["derived_timeframe_usage_mode"] == (
+        "candidate_entry_diagnostics_only_no_gate_or_score_change"
+    )
+    assert report.best_activity_candidate["derived_timeframe_features"][
+        "changes_trade_gates_or_scores"
+    ] is False
 
 
 def test_eth_specific_regime_diagnostics_are_reported() -> None:
@@ -129,3 +139,9 @@ def test_no_trade_allowed_candidate_is_diagnostic_only() -> None:
     assert report.blindtest_final_capital_reference == report.start_capital_reference
     assert report.router_artifact["diagnostic_only"] is True
     assert report.router_artifact["blindtest_strategy_executed"] is False
+    assert report.router_artifact["derived_timeframes_available"] is True
+    assert report.router_artifact["derived_timeframes_used_by_router"] is False
+    assert report.router_artifact["used_timeframes"] == []
+    assert report.router_artifact["missing_timeframe_reason"] == (
+        "no candidate training entry had a closed higher-timeframe feature"
+    )

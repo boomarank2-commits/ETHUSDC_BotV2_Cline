@@ -2,6 +2,8 @@
 
 from dataclasses import asdict
 
+from src.data.derived_timeframes import build_closed_timeframe_feature_snapshots
+
 from . import activity_first_router_report as _r
 
 
@@ -103,6 +105,44 @@ def _select_candidate_pool(evaluations):
     return pool
 
 
+def _derived_feature_summary(evaluation, derived_features):
+    entry_times = [trade.entry_time for trade in evaluation.result.trades]
+    timeframes = {}
+    for timeframe in derived_features.used_timeframes:
+        rows = [
+            derived_features.snapshots[entry_time][timeframe]
+            for entry_time in entry_times
+            if timeframe in derived_features.snapshots.get(entry_time, {})
+        ]
+        returns = [row["close_return"] for row in rows if row["close_return"] is not None]
+        timeframes[timeframe] = {
+            "entry_feature_count": len(rows),
+            "entry_feature_coverage": len(rows) / len(entry_times) if entry_times else 0.0,
+            "average_closed_candle_return": (
+                sum(returns) / len(returns) if returns else None
+            ),
+            "positive_closed_candle_return_rate": (
+                sum(1 for value in returns if value > 0) / len(returns)
+                if returns
+                else None
+            ),
+        }
+    return {
+        "usage_mode": "candidate_entry_diagnostics_only",
+        "changes_trade_gates_or_scores": False,
+        "timeframes": timeframes,
+    }
+
+
+def _candidate_summary(evaluation, derived_features):
+    summary = _r._candidate_summary(evaluation)
+    summary["derived_timeframe_features"] = _derived_feature_summary(
+        evaluation,
+        derived_features,
+    )
+    return summary
+
+
 def _aggregate_pool_result(candles, selected_pool, start_capital, filters):
     if not selected_pool:
         return _r._empty_simulation_result(_r._diagnostic_placeholder_candidate(start_capital), start_capital)
@@ -138,12 +178,12 @@ def _aggregate_pool_result(candles, selected_pool, start_capital, filters):
     return _r.ActivityFirstSimulationResult(pool_candidate, start_capital, start_capital + total_net, total_gross, total_fees, total_net, total_net / days, len(chosen), len(chosen) / days, sum(1 for trade in chosen if trade.net_pnl > 0), sum(1 for trade in chosen if trade.net_pnl < 0), sum(1 for trade in chosen if trade.net_pnl == 0), max_drawdown, len(proposals), skipped, sum(evaluation.result.blocked_signal_count for evaluation in selected_pool), chosen)
 
 
-def _search_pass_summary(evaluations):
+def _search_pass_summary(evaluations, derived_features):
     rows = []
     for search_pass in sorted({evaluation.candidate.search_pass for evaluation in evaluations}):
         current = [evaluation for evaluation in evaluations if evaluation.candidate.search_pass == search_pass]
         best = max(current, key=lambda evaluation: evaluation.result.quote_per_day, default=None)
-        rows.append({"pass_name": search_pass, "candidates_generated": len(current), "setup_tests_run": len(current), "candidates_positive_net": sum(1 for evaluation in current if evaluation.result.total_net_pnl > 0), "candidates_active_enough": sum(1 for evaluation in current if _activity_ok(evaluation.result)), "candidates_trade_allowed": sum(1 for evaluation in current if evaluation.trade_allowed), "best_candidate": _r._candidate_summary(best) if best else None})
+        rows.append({"pass_name": search_pass, "candidates_generated": len(current), "setup_tests_run": len(current), "candidates_positive_net": sum(1 for evaluation in current if evaluation.result.total_net_pnl > 0), "candidates_active_enough": sum(1 for evaluation in current if _activity_ok(evaluation.result)), "candidates_trade_allowed": sum(1 for evaluation in current if evaluation.trade_allowed), "best_candidate": _candidate_summary(best, derived_features) if best else None})
     return rows
 
 
@@ -170,6 +210,23 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     filters = _r.load_exchange_info_filters()
     candidates = _r._generate_activity_first_candidates(stake_quote_amount, profile)
     evaluations = _evaluate_training_candidates(candidates, split.training_candles, start_capital, filters, progress_callback)
+    decision_open_times = {
+        trade.entry_time
+        for evaluation in evaluations
+        for trade in evaluation.result.trades
+    }
+    derived_features = build_closed_timeframe_feature_snapshots(
+        split.training_candles,
+        decision_open_times,
+    )
+    derived_timeframes_available = bool(derived_features.available_timeframes)
+    derived_timeframes_used_by_router = bool(derived_features.used_timeframes)
+    if not derived_timeframes_available:
+        missing_timeframe_reason = "no complete higher-timeframe candles in training window"
+    elif not derived_timeframes_used_by_router:
+        missing_timeframe_reason = "no candidate training entry had a closed higher-timeframe feature"
+    else:
+        missing_timeframe_reason = None
     allowed = [evaluation for evaluation in evaluations if evaluation.trade_allowed]
     selected_pool = _select_candidate_pool(evaluations)
     best_activity = max(evaluations, key=lambda evaluation: evaluation.result.trades_per_day, default=None)
@@ -181,7 +238,10 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     status, reason = _candidate_space_status(evaluations)
     if selected_pool:
         selected_result = _aggregate_pool_result(split.blindtest_candles, selected_pool, start_capital, filters)
-        selected_setups = [_r._candidate_summary(evaluation) for evaluation in selected_pool]
+        selected_setups = [
+            _candidate_summary(evaluation, derived_features)
+            for evaluation in selected_pool
+        ]
         selection_reason = "training_pool_one_shared_account_context"
     else:
         selected_result = _r._empty_simulation_result(_r._diagnostic_placeholder_candidate(stake_quote_amount), start_capital)
@@ -193,9 +253,9 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     target_status = "blindtest_target_reached" if selected_pool and selected_result.quote_per_day >= _r.TARGET_QUOTE_PER_DAY else "target_not_reached"
     if progress_callback is not None:
         progress_callback({"phase": "activity_first_router_diagnostics", "progress_pct": 88.7, "detail": "ETHUSDC-Regime-Diagnose wird erstellt"})
-    rejection_summary = {"router_name": "activity_first_router", "candidate_space_status": status, "candidate_space_reason": reason, "rejection_counts": _r._rejection_counts(evaluations), "search_pass_summary": _search_pass_summary(evaluations), "eth_regime_diagnostics": _r._eth_regime_diagnostics(split.training_candles), "best_activity_candidate": _r._candidate_summary(best_activity) if best_activity else None, "best_edge_candidate": _r._candidate_summary(best_edge) if best_edge else None, "best_balanced_candidate": _r._candidate_summary(best_balanced) if best_balanced else None, "best_fee_survivor_candidate": _r._candidate_summary(best_fee_survivor) if best_fee_survivor else None, "best_target_candidate": _r._candidate_summary(best_target) if best_target else None, "selected_trade_allowed_candidates": selected_setups, "selected_trade_allowed_candidate": selected_setups[0] if selected_setups else None, "selected_pool_size": len(selected_pool), "pool_raw_proposals": selected_result.signal_count, "pool_executed_trades": selected_result.trade_count, "pool_skipped_overlaps": selected_result.no_trade_count, "target_feasibility_status": target_status, "best_training_quote_per_day": best_training_quote_per_day, "diagnostic_only": not selected_pool, "selection_reason": selection_reason}
-    artifact = {"run_type": "unknown", "smoke_test_not_performance_proof": False, "live_release_allowed": False, "legacy_cluster_router_used": False, "diagnostic_only": not selected_pool, "trade_allowed": bool(selected_pool), "blindtest_strategy_executed": bool(selected_pool), "selection_policy": "training_top_n_pool_one_shared_account_context", "selection_reason": selection_reason, "exchange_info_filters_used": filters is not None, "candidate_generation_version": "activity_first_v6_multi_candidate_pool", "eth_specific_strategy_scope": True, "historical_news_labels_used": False, "historical_orderbook_used": False, "fast_rolling_metrics_used": True, "scaled_eth_activity_gate_used": True, "eth_selection_penalty_used": True, "multi_candidate_pool_used": True, "pool_overlap_guard_used": True, "pool_execution_policy": "one_position_at_a_time", "selected_pool_size": len(selected_pool), "pool_raw_proposals": selected_result.signal_count, "pool_executed_trades": selected_result.trade_count, "pool_skipped_overlaps": selected_result.no_trade_count}
-    return _r.ActivityFirstRouterReport(run_id, "activity_first_router", _r.CONFIG.symbol, _r.CONFIG.quote_asset, start_capital, stake_quote_amount, profile, split.training_start, split.training_end, split.blindtest_start, split.blindtest_end, status, reason, len(candidates), len(evaluations), len(allowed), len(selected_pool), sum(1 for evaluation in evaluations if evaluation.rejection_reason), selected_setups, rejection_summary, _r._candidate_summary(best_activity) if best_activity else None, _r._candidate_summary(best_edge) if best_edge else None, _r._candidate_summary(best_balanced) if best_balanced else None, _r._candidate_summary(best_fee_survivor) if best_fee_survivor else None, _r._candidate_summary(best_target) if best_target else None, selected_result.final_capital_reference, selected_result.total_gross_pnl, selected_result.total_fees, selected_result.total_net_pnl, selected_result.total_net_pnl / start_capital * 100 if start_capital else 0.0, selected_result.quote_per_day, selected_result.trade_count, selected_result.winning_trades, selected_result.losing_trades, selected_result.neutral_trades, selected_result.max_drawdown, sum(1 for value in daily.values() if value > 0), sum(1 for value in daily.values() if value < 0), sum(1 for value in daily.values() if value == 0), max(daily.values(), default=0.0), min(daily.values(), default=0.0), best_training_quote_per_day, _r.TARGET_QUOTE_PER_DAY, target_ratio, target_status, artifact, [asdict(trade) for trade in selected_result.trades[:250]])
+    rejection_summary = {"router_name": "activity_first_router", "candidate_space_status": status, "candidate_space_reason": reason, "rejection_counts": _r._rejection_counts(evaluations), "search_pass_summary": _search_pass_summary(evaluations, derived_features), "eth_regime_diagnostics": _r._eth_regime_diagnostics(split.training_candles), "derived_timeframes_available": derived_timeframes_available, "derived_timeframes_used_by_router": derived_timeframes_used_by_router, "used_timeframes": derived_features.used_timeframes, "missing_timeframe_reason": missing_timeframe_reason, "derived_timeframe_closed_candle_counts": derived_features.closed_candle_counts, "derived_timeframe_usage_mode": "candidate_entry_diagnostics_only_no_gate_or_score_change", "best_activity_candidate": _candidate_summary(best_activity, derived_features) if best_activity else None, "best_edge_candidate": _candidate_summary(best_edge, derived_features) if best_edge else None, "best_balanced_candidate": _candidate_summary(best_balanced, derived_features) if best_balanced else None, "best_fee_survivor_candidate": _candidate_summary(best_fee_survivor, derived_features) if best_fee_survivor else None, "best_target_candidate": _candidate_summary(best_target, derived_features) if best_target else None, "selected_trade_allowed_candidates": selected_setups, "selected_trade_allowed_candidate": selected_setups[0] if selected_setups else None, "selected_pool_size": len(selected_pool), "pool_raw_proposals": selected_result.signal_count, "pool_executed_trades": selected_result.trade_count, "pool_skipped_overlaps": selected_result.no_trade_count, "target_feasibility_status": target_status, "best_training_quote_per_day": best_training_quote_per_day, "diagnostic_only": not selected_pool, "selection_reason": selection_reason}
+    artifact = {"run_type": "unknown", "smoke_test_not_performance_proof": False, "live_release_allowed": False, "legacy_cluster_router_used": False, "diagnostic_only": not selected_pool, "trade_allowed": bool(selected_pool), "blindtest_strategy_executed": bool(selected_pool), "selection_policy": "training_top_n_pool_one_shared_account_context", "selection_reason": selection_reason, "exchange_info_filters_used": filters is not None, "candidate_generation_version": "activity_first_v6_multi_candidate_pool", "eth_specific_strategy_scope": True, "historical_news_labels_used": False, "historical_orderbook_used": False, "fast_rolling_metrics_used": True, "scaled_eth_activity_gate_used": True, "eth_selection_penalty_used": True, "multi_candidate_pool_used": True, "pool_overlap_guard_used": True, "pool_execution_policy": "one_position_at_a_time", "selected_pool_size": len(selected_pool), "pool_raw_proposals": selected_result.signal_count, "pool_executed_trades": selected_result.trade_count, "pool_skipped_overlaps": selected_result.no_trade_count, "derived_timeframes_available": derived_timeframes_available, "derived_timeframes_used_by_router": derived_timeframes_used_by_router, "used_timeframes": derived_features.used_timeframes, "missing_timeframe_reason": missing_timeframe_reason, "derived_timeframe_usage_mode": "candidate_entry_diagnostics_only_no_gate_or_score_change"}
+    return _r.ActivityFirstRouterReport(run_id, "activity_first_router", _r.CONFIG.symbol, _r.CONFIG.quote_asset, start_capital, stake_quote_amount, profile, split.training_start, split.training_end, split.blindtest_start, split.blindtest_end, status, reason, len(candidates), len(evaluations), len(allowed), len(selected_pool), sum(1 for evaluation in evaluations if evaluation.rejection_reason), selected_setups, rejection_summary, _candidate_summary(best_activity, derived_features) if best_activity else None, _candidate_summary(best_edge, derived_features) if best_edge else None, _candidate_summary(best_balanced, derived_features) if best_balanced else None, _candidate_summary(best_fee_survivor, derived_features) if best_fee_survivor else None, _candidate_summary(best_target, derived_features) if best_target else None, selected_result.final_capital_reference, selected_result.total_gross_pnl, selected_result.total_fees, selected_result.total_net_pnl, selected_result.total_net_pnl / start_capital * 100 if start_capital else 0.0, selected_result.quote_per_day, selected_result.trade_count, selected_result.winning_trades, selected_result.losing_trades, selected_result.neutral_trades, selected_result.max_drawdown, sum(1 for value in daily.values() if value > 0), sum(1 for value in daily.values() if value < 0), sum(1 for value in daily.values() if value == 0), max(daily.values(), default=0.0), min(daily.values(), default=0.0), best_training_quote_per_day, _r.TARGET_QUOTE_PER_DAY, target_ratio, target_status, artifact, [asdict(trade) for trade in selected_result.trades[:250]])
 
 
 _r._candidate_rejection = _candidate_rejection

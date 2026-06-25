@@ -9,6 +9,10 @@ Latest analyzed run:
 - Cause: old 12-trade/year setup was correctly blocked, but no replacement setup was found; 109/109 rows skipped in Full-Training precheck: 61 target-math, 48 activity.
 
 Current patch:
+- Derived-Timeframes waren bisher nur Datenstatus. `activity_first_router` und Kandidatensuche nutzten ausschließlich 1m-Candles.
+- Neu: Kandidaten-Entry-Diagnosen erhalten lookahead-sichere 5m/15m/30m/1h/4h/1d-Snapshots aus der zuletzt vollständig geschlossenen HTF-Kerze.
+- Router-Reports enthalten `derived_timeframes_available`, `derived_timeframes_used_by_router`, `used_timeframes`, `missing_timeframe_reason` und Coverage/Return-Diagnosen je Best-/Pool-Kandidat.
+- HTF-Metriken ändern bewusst noch keine Gates, Scores, Kandidatenauswahl oder Trades. Smoke und Full bleiben derselbe Pipeline-/Router-Pfad.
 - Daten-/Feature-Baustein ergänzt: lookahead-sichere abgeleitete ETHUSDC-Timeframes 5m/15m/30m/1h/4h/1d aus vorhandenen 1m-Candles; nur vollständig geschlossene Buckets werden als Feature-Kerzen gezählt.
 - `data_preparation_report.json` zeigt jetzt ETHUSDC-1m vorhanden, `derived_timeframes_available`, Counts je abgeleitetem Timeframe sowie BTCUSDC/ETHBTC/trades/aggTrades/bookTicker/orderbook available/missing. BookTicker/Orderbook bleiben missing und ungenutzt.
 - Keine Strategie-, Router-, Smoke-/Full-Engine- oder Live/Paper-Änderung.
@@ -32,7 +36,7 @@ Current patch:
 - Old target-math-dead rare setups remain blocked; no V1 fallback, no blindtest learning, no fake trades.
 
 Next action:
-- Bei Bedarf 7-Tage-Smoke-Test über UI erneut starten; wenn technisch sauber, danach Full-Backtest sinnvoll. Cline startet keinen Full-Backtest.
+- UI-nahen Smoke nur zur Prüfung der neuen HTF-Reportfelder/Coverage starten. Danach training-only entscheiden, ob eine einzelne HTF-Metrik zunächst als Diagnosevergleich und erst nach Beleg als Score-/Gate-Feature dienen darf.
 
 Tests latest:
 - `python -m compileall src tests` green.

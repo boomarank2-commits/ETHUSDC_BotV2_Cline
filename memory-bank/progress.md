@@ -1285,3 +1285,18 @@ Tests:
 
 Next:
 - Start UI backtest visibly; then inspect new stability fields. Existing old reports cannot honestly identify the new winner because they lack trade/month distribution.
+
+## 2026-06-25 - Derived-Timeframes an Router-Diagnose angeschlossen
+
+Changed:
+- Bestaetigt: 5m/15m/30m/1h/4h/1d waren vorher nur im Datenreport sichtbar.
+- Zeit-sichere HTF-Feature-Snapshots werden jetzt je Trainings-Kandidaten-Entry aus vollstaendig geschlossenen Kerzen gebaut.
+- Router-Report zeigt Verfuegbarkeit, Nutzung, verwendete Timeframes, Missing-Grund und Kandidaten-Coverage.
+- Keine Aenderung an Gates, Scores, Pool-Auswahl, Trades oder Smoke-/Full-Pfad.
+
+Tests:
+- `python -m compileall src tests`
+- `python -m pytest -q`
+
+Next:
+- UI-nahen Smoke fuer Report-/Coverage-Pruefung; danach training-only Nutzen einzelner HTF-Metriken untersuchen.
