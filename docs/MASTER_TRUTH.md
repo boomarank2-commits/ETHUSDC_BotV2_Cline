@@ -1,4 +1,4 @@
-﻿# MASTER_TRUTH
+# MASTER_TRUTH
 
 This file contains only confirmed project truth.
 
@@ -20,14 +20,32 @@ ETHUSDC Adaptive Spot LONG-only Bot V2.
 - No margin
 - No leverage
 
+## Final Validation Target
+
+The final decision target is one 730 day training / optimization window followed by one 365 day blindtest.
+
+1 / 7 / 14 / 30 day smoke runs are only shortened technical checks of this same contract. They are not separate backtests and must not receive special logic.
+
+When the 365 day blindtest workflow is proven, the short smoke windows are no longer decision criteria.
+
 ## Core Model
 
 The target model is:
 
-Situation -> Cluster -> Router -> Setup -> Trade
+Situation -> Cluster / Regime -> Router -> Setup or no_trade -> Trade
 
 Strategies are search space only.
 Strategies are not the final target model.
+
+## Shared Capital Rule
+
+A trained strategy pool may contain multiple candidates.
+
+The simulation still has one shared account context.
+
+Candidate results must not be added as if every candidate had separate capital.
+
+Overlapping candidate proposals must be resolved by the router. Without an explicit later capital allocation rule, only one action may be executed for the same shared time / capital context.
 
 ## Build Order
 
