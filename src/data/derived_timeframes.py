@@ -81,6 +81,15 @@ def _closed_candle_from_rows(
         low=min(candle.low for candle in bucket_candles),
         close=bucket_candles[-1].close,
         volume=sum(candle.volume for candle in bucket_candles),
+        quote_volume=sum(candle.quote_volume for candle in bucket_candles),
+        trade_count=sum(candle.trade_count for candle in bucket_candles),
+        taker_buy_base_volume=sum(
+            candle.taker_buy_base_volume for candle in bucket_candles
+        ),
+        taker_buy_quote_volume=sum(
+            candle.taker_buy_quote_volume for candle in bucket_candles
+        ),
+        close_time=bucket_candles[-1].close_time,
     )
 
 

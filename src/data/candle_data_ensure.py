@@ -14,7 +14,10 @@ from src.data.binance_candle_downloader import (
     download_ethusdc_1m_candles,
     update_ethusdc_1m_candles,
 )
-from src.data.candle_csv_io import load_candle_dataset_from_csv
+from src.data.candle_csv_io import (
+    candle_csv_has_order_flow_fields,
+    load_candle_dataset_from_csv,
+)
 from src.data.data_catalog import CandleDataCatalogEntry, get_catalog_path, upsert_data_catalog_entry
 from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 
@@ -256,6 +259,33 @@ def ensure_ethusdc_1m_data_ready(
             target_path, symbol=CONFIG.symbol, interval="1m"
         )
         existing_count = len(existing_dataset.candles)
+        last_open_time = existing_dataset.candles[-1].open_time
+        if not candle_csv_has_order_flow_fields(target_path):
+            _emit_progress(
+                progress_callback,
+                "full_download",
+                "Alte Candle-Struktur erkannt; vollständige Binance-Kline-Felder werden geladen",
+                1.0,
+                candle_count=existing_count,
+                last_open_time=last_open_time,
+            )
+            start_time_ms, end_time_ms = _full_download_window_ms()
+            download_ethusdc_1m_candles(
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+                output_path=target_path,
+                progress_callback=download_progress_callback,
+                replace_existing=True,
+            )
+            return _final_result(
+                target_path,
+                "ETHUSDC 1m Daten mit vollständigen Binance-Kline-Feldern neu geladen.",
+                was_updated=True,
+                full_download=True,
+                incremental_update=False,
+                already_current=False,
+            )
+
         if existing_count < REQUIRED_CANDLE_COUNT:
             _emit_progress(
                 progress_callback,
@@ -281,7 +311,6 @@ def ensure_ethusdc_1m_data_ready(
                 already_current=False,
             )
 
-        last_open_time = existing_dataset.candles[-1].open_time
         if _is_current(last_open_time):
             _emit_progress(
                 progress_callback,

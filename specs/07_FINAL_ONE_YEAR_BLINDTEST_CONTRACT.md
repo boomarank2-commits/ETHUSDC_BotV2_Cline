@@ -41,7 +41,7 @@ Zulaessig, wenn sauber validiert und lookahead-sicher:
 
 - ETHUSDC 1m-Kerzen
 - daraus abgeleitete Timeframes: 5m, 15m, 30m, 1h, 4h, 1d
-- ETHUSDC trades
+- vollständige Kline-Felder für Quote-Volumen, Trade Count und Taker-Buy
 - ETHUSDC aggTrades
 - exchange_info
 - Binance-Regeln
@@ -49,12 +49,20 @@ Zulaessig, wenn sauber validiert und lookahead-sicher:
 - Slippage-Modell
 - BTCUSDC als Marktkontext, falls valide
 - ETHBTC als relative ETH-Stärke, falls valide
+- ETHUSDT als liquider ETH-Preisfindungskontext, falls valide
+- USDCUSDT als Stablecoin-/Quote-Kontext, falls valide
 - bookTicker, falls live gesammelt und validiert
 - Orderbuchdaten / Snapshots, falls live gesammelt und validiert
 
 BookTicker und Orderbuchdaten dürfen erst genutzt werden, wenn sie historisch für den jeweiligen Zeitpunkt wirklich vorhanden waren. Als praktische Mindestbasis gelten mindestens 30 Tage sauber gesammelte, lückenarme und zeit-sichere Live-Daten.
 
 Ziel der zusätzlichen Daten ist bessere Situationserkennung, nicht künstlich bessere Reports.
+
+Vor jedem Smoke- oder Full-Lauf aus der UI wird dieselbe zentrale
+Datenbereitschaft ausgeführt. Fehlende, unvollständige oder veraltete Pflichtdaten
+werden geladen/aktualisiert oder blockieren den Lauf. Raw-Trades werden nicht
+zusätzlich dupliziert, solange aggTrades und Kline-Trade-Counts die festgelegte
+kompakte historische Orderflow-Basis bilden.
 
 ## Pool-Regel
 

@@ -9,6 +9,19 @@ Latest analyzed run:
 - Cause: old 12-trade/year setup was correctly blocked, but no replacement setup was found; 109/109 rows skipped in Full-Training precheck: 61 target-math, 48 activity.
 
 Current patch:
+- Gemeinsamer UI-Datenstart erweitert: Smoke 1/7/14/30 und Full rufen vor
+  derselben Pipeline `ensure_all_backtest_market_data_ready(...)` auf.
+- Automatisch vorhanden/aktuell gehalten werden ETHUSDC, BTCUSDC, ETHBTC,
+  ETHUSDT und USDCUSDT 1m, vollständige Kline-Orderflow-Felder,
+  ETHUSDC exchange_info und kompakte historische ETHUSDC-aggTrade-Minutenfeatures.
+- Live ETHUSDC Best-Bid/Ask + Top-20-Depth wird append-only im Hintergrund
+  gesammelt; vor 30 echten Tagen bleibt es ausdrücklich ungenutzt.
+- ETHUSDT, USDCUSDT, Kline-Orderflow und aggTrades sind zunächst Datenbasis,
+  aber noch keine aggressive Router-/Strategieänderung. Reports markieren
+  verfügbar vs. tatsächlich verwendet getrennt.
+- Legacy-Sechs-Spalten-CSV wird einmal vollständig ersetzt; Monatswechsel bei
+  aggTrade-Archiven nutzt für den letzten abgeschlossenen Monat Tagesarchive.
+- Clean-Button stoppt den Collector und entfernt auch neue Datenbereiche.
 - Derived-Timeframes waren bisher nur Datenstatus. `activity_first_router` und Kandidatensuche nutzten ausschließlich 1m-Candles.
 - Neu: Kandidaten-Entry-Diagnosen erhalten lookahead-sichere 5m/15m/30m/1h/4h/1d-Snapshots aus der zuletzt vollständig geschlossenen HTF-Kerze.
 - Router-Reports enthalten `derived_timeframes_available`, `derived_timeframes_used_by_router`, `used_timeframes`, `missing_timeframe_reason` und Coverage/Return-Diagnosen je Best-/Pool-Kandidat.
@@ -36,7 +49,10 @@ Current patch:
 - Old target-math-dead rare setups remain blocked; no V1 fallback, no blindtest learning, no fake trades.
 
 Next action:
-- UI-nahen Smoke nur zur Prüfung der neuen HTF-Reportfelder/Coverage starten. Danach training-only entscheiden, ob eine einzelne HTF-Metrik zunächst als Diagnosevergleich und erst nach Beleg als Score-/Gate-Feature dienen darf.
+- Ersten sichtbaren UI-Start ausführen und den potenziell langen initialen
+  Datenaufbau beobachten; danach Reports auf Vollständigkeit/Aktualität prüfen.
+- Erst anschließend training-only und schrittweise entscheiden, welche der
+  neuen Daten als Router-Feature angeschlossen werden. Kein Blindtest-Lernen.
 
 Tests latest:
 - `python -m compileall src tests` green.

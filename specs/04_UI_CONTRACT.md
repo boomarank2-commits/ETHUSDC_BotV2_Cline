@@ -560,3 +560,41 @@ Keine internen Tests ersetzen diese Wahrheit.
 
 
 
+\## Automatische Datenbereitschaft vor Smoke und Full
+
+
+
+Der Backtest-Button muss vor jedem Lauf denselben zentralen Datencheck ausführen.
+
+
+
+Pflicht:
+
+
+
+\* ETHUSDC, BTCUSDC, ETHBTC, ETHUSDT und USDCUSDT 1m prüfen
+
+\* fehlende oder unvollständige Historie laden / fortsetzen / backfillen
+
+\* Daten nach der festgelegten Sieben-Tage-Regel aktualisieren
+
+\* vollständige Kline-Felder für Quote-Volumen, Trade Count und Taker-Buy erhalten
+
+\* exchange\_info prüfen
+
+\* fehlende offizielle ETHUSDC-aggTrades-Archive laden und minutenweise verdichten
+
+\* öffentliche Spread-/Depth-Sammlung starten oder ihren Heartbeat prüfen
+
+
+
+BookTicker und Orderbuch dürfen trotz gestarteter Sammlung erst als
+`used_in_backtest` gelten, wenn echte, zeit-sichere Mindestabdeckung vorhanden
+und die Feature-Nutzung separat validiert ist.
+
+
+
+Der Datencheck darf für Smoke und Full keinen getrennten Pfad besitzen.
+
+
+

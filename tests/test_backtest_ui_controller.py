@@ -4,9 +4,12 @@ import pytest
 
 import src.ui.backtest_ui_controller as controller_module
 from src.backtest.preparation_pipeline import PreparationPipelineResult
+from src.data.agg_trade_data_ensure import AggTradeDataEnsureResult
+from src.data.backtest_market_data_ensure import BacktestMarketDataEnsureResult
 from src.data.candle_data_ensure import CandleDataEnsureResult
 from src.data.context_data_ensure import ContextDataEnsureResult
 from src.data.exchange_info import ExchangeInfoStatus
+from src.data.live_microstructure import LiveMicrostructureStatus
 from src.reports.backtest_summary import BacktestSummary
 from src.common.runtime_state import RuntimeState
 from src.backtest.run_progress import BacktestRunProgress
@@ -21,11 +24,28 @@ from src.ui.backtest_ui_controller import (
 
 @pytest.fixture(autouse=True)
 def no_context_download(monkeypatch):
-    monkeypatch.setattr(controller_module, "ensure_all_context_data_ready", lambda progress_callback=None: [])
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_all_backtest_market_data_ready",
+        lambda progress_callback=None: _market_data_result(),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_ethusdc_1m_data_ready",
+        lambda progress_callback=None: _ensure_result(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_all_context_data_ready",
+        lambda progress_callback=None: [],
+        raising=False,
+    )
     monkeypatch.setattr(
         controller_module,
         "ensure_exchange_info_current",
         lambda: ExchangeInfoStatus("ETHUSDC", "exchange.json", True, False, 1.0, 1, True, True, None),
+        raising=False,
     )
 
 
@@ -45,6 +65,59 @@ def _ensure_result(success: bool = True, candle_count: int = 5) -> CandleDataEns
         already_current=success,
         last_open_time="2026-01-01T00:00:00Z",
         error=None if success else "too few",
+    )
+
+
+def _market_data_result(
+    success: bool = True,
+    candle_count: int = 5,
+    message: str | None = None,
+) -> BacktestMarketDataEnsureResult:
+    primary = _ensure_result(success=success, candle_count=candle_count)
+    exchange = ExchangeInfoStatus(
+        "ETHUSDC",
+        "exchange.json",
+        True,
+        False,
+        1.0,
+        1,
+        True,
+        True,
+        None,
+    )
+    agg_trades = AggTradeDataEnsureResult(
+        success=True,
+        message="ready",
+        partition_count=1,
+        first_partition="2026-01",
+        last_partition="2026-01",
+        latest_complete_date="2026-01-31",
+        output_path="data/agg_trades",
+        was_updated=False,
+        error=None,
+    )
+    live = LiveMicrostructureStatus(
+        success=True,
+        message="collector active",
+        collector_running=True,
+        process_id=1,
+        first_sample_time="2026-01-01T00:00:00Z",
+        last_sample_time="2026-01-01T00:00:00Z",
+        sample_count=1,
+        coverage_days=0.0,
+        usable_for_backtest=False,
+        output_path="data/live_microstructure",
+        error=None,
+    )
+    return BacktestMarketDataEnsureResult(
+        success=success,
+        message=message or ("ready" if success else primary.message),
+        primary_candles=primary,
+        context_candles=[],
+        exchange_info=exchange,
+        agg_trades=agg_trades,
+        live_microstructure=live,
+        blocking_errors=[] if success else [message or primary.message],
     )
 
 
@@ -207,8 +280,8 @@ def test_controller_does_not_start_pipeline_when_ensure_has_one_candle(monkeypat
 
     monkeypatch.setattr(
         controller_module,
-        "ensure_ethusdc_1m_data_ready",
-        lambda progress_callback=None: _ensure_result(False, 1),
+        "ensure_all_backtest_market_data_ready",
+        lambda progress_callback=None: _market_data_result(False, 1),
     )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
 
@@ -227,17 +300,31 @@ def test_controller_does_not_start_pipeline_when_context_is_incomplete(monkeypat
         pipeline_called = True
         return _pipeline_result()
 
-    monkeypatch.setattr(
-        controller_module,
-        "ensure_ethusdc_1m_data_ready",
-        lambda progress_callback=None: _ensure_result(),
+    context = ContextDataEnsureResult(
+        "BTCUSDC",
+        False,
+        "not_enough_data",
+        1,
+        None,
+        False,
+        False,
+        "btc.csv",
+        "not_enough_data",
+    )
+    market_data = _market_data_result(
+        False,
+        message="Kontextdaten fehlen: BTCUSDC",
+    )
+    market_data = BacktestMarketDataEnsureResult(
+        **{
+            **market_data.__dict__,
+            "context_candles": [context],
+        }
     )
     monkeypatch.setattr(
         controller_module,
-        "ensure_all_context_data_ready",
-        lambda progress_callback=None: [
-            ContextDataEnsureResult("BTCUSDC", False, "not_enough_data", 1, None, False, False, "btc.csv", "not_enough_data")
-        ],
+        "ensure_all_backtest_market_data_ready",
+        lambda progress_callback=None: market_data,
     )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
 
@@ -344,13 +431,17 @@ def test_progress_callback_receives_phases(monkeypatch) -> None:
 
     def fake_ensure(progress_callback=None):
         progress_callback({"phase": "data_ensure", "mode": "already_current"})
-        return _ensure_result()
+        return _market_data_result()
 
     def fake_pipeline(**kwargs):
         kwargs["progress_callback"]({"phase": "completed", "progress_pct": 100.0})
         return _pipeline_result()
 
-    monkeypatch.setattr(controller_module, "ensure_ethusdc_1m_data_ready", fake_ensure)
+    monkeypatch.setattr(
+        controller_module,
+        "ensure_all_backtest_market_data_ready",
+        fake_ensure,
+    )
     monkeypatch.setattr(controller_module, "run_backtest_preparation_pipeline", fake_pipeline)
     monkeypatch.setattr(controller_module, "load_backtest_summary", lambda run_id: _summary())
 
@@ -508,8 +599,49 @@ def test_network_error_is_mapped_to_clear_ui_message(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         controller_module,
-        "ensure_ethusdc_1m_data_ready",
-        lambda progress_callback=None: network_error_result,
+        "ensure_all_backtest_market_data_ready",
+        lambda progress_callback=None: BacktestMarketDataEnsureResult(
+            success=False,
+            message=network_error_result.message,
+            primary_candles=network_error_result,
+            context_candles=[],
+            exchange_info=ExchangeInfoStatus(
+                "ETHUSDC",
+                "exchange.json",
+                False,
+                False,
+                None,
+                0,
+                False,
+                False,
+                "network error",
+            ),
+            agg_trades=AggTradeDataEnsureResult(
+                False,
+                "not checked",
+                0,
+                None,
+                None,
+                None,
+                "data/agg_trades",
+                False,
+                "not checked",
+            ),
+            live_microstructure=LiveMicrostructureStatus(
+                False,
+                "not checked",
+                False,
+                None,
+                None,
+                None,
+                0,
+                0.0,
+                False,
+                "data/live_microstructure",
+                "not checked",
+            ),
+            blocking_errors=[network_error_result.message],
+        ),
     )
 
     result = run_backtest_for_ui()

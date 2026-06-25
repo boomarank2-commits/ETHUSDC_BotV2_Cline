@@ -14,6 +14,16 @@ def test_valid_ethusdc_1m_dataset_is_accepted() -> None:
     assert dataset.symbol == "ETHUSDC"
 
 
+@pytest.mark.parametrize(
+    "symbol",
+    ["BTCUSDC", "ETHBTC", "ETHUSDT", "USDCUSDT"],
+)
+def test_supported_context_dataset_is_accepted(symbol: str) -> None:
+    dataset = CandleDataset(symbol, "1m", [_candle("2026-01-01T00:00:00Z")])
+
+    assert dataset.symbol == symbol
+
+
 def test_wrong_symbol_is_rejected() -> None:
     with pytest.raises(ValueError):
         CandleDataset("XRPUSDC", "1m", [_candle("2026-01-01T00:00:00Z")])

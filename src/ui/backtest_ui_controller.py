@@ -9,10 +9,10 @@ from src.backtest.preparation_pipeline import run_backtest_preparation_pipeline
 from src.backtest.run_progress import load_run_progress
 from src.common.report_paths import BACKTEST_REPORTS_DIR, get_run_report_dir
 from src.common.runtime_state import load_runtime_state
-from src.data.candle_data_ensure import ensure_ethusdc_1m_data_ready
-from src.data.context_data_ensure import ensure_all_context_data_ready
+from src.data.backtest_market_data_ensure import (
+    ensure_all_backtest_market_data_ready,
+)
 from src.data.data_overview import load_data_overview_report
-from src.data.exchange_info import ensure_exchange_info_current
 from src.reports.backtest_summary import BacktestSummary, load_backtest_summary
 
 ALLOWED_PROFILES = ("conservative", "normal", "aggressive")
@@ -324,17 +324,6 @@ def _ui_error_message(message: str) -> str:
     return message
 
 
-def _context_failure_message(results: list[object]) -> str | None:
-    failed = [result for result in results if not getattr(result, "success", False)]
-    if not failed:
-        return None
-    details = "; ".join(
-        f"{getattr(result, 'symbol', 'context')}: {getattr(result, 'message', getattr(result, 'error', 'unknown'))}"
-        for result in failed
-    )
-    return f"Kontextdaten fehlen/unvollständig, Kontextfilter nicht aktiv. Backtest wurde nicht gestartet: {details}"
-
-
 def run_backtest_for_ui(
     settings: BacktestUiSettings | None = None,
     progress_callback: Callable[[dict], None] | None = None,
@@ -344,20 +333,15 @@ def run_backtest_for_ui(
         selected_settings = settings or BacktestUiSettings()
         if progress_callback is not None:
             progress_callback({"phase": "data_check_started", "progress_pct": 0.0})
-        ensure_result = ensure_ethusdc_1m_data_ready(progress_callback=progress_callback)
-        if not ensure_result.success:
+        market_data = ensure_all_backtest_market_data_ready(
+            progress_callback=progress_callback
+        )
+        if not market_data.success:
             return _failure_result(
-                _ui_error_message(ensure_result.message),
-                candle_count=ensure_result.candle_count,
+                _ui_error_message(market_data.message),
+                candle_count=market_data.primary_candles.candle_count,
                 run_type=selected_settings.run_type,
             )
-        context_results = ensure_all_context_data_ready(progress_callback=progress_callback)
-        context_failure = _context_failure_message(context_results)
-        if context_failure is not None:
-            return _failure_result(_ui_error_message(context_failure), run_type=selected_settings.run_type)
-        exchange_status = ensure_exchange_info_current()
-        if not exchange_status.usable_for_backtest:
-            return _failure_result(_ui_error_message(f"exchange_info nicht nutzbar: {exchange_status.reason}"), run_type=selected_settings.run_type)
         pipeline_result = run_backtest_preparation_pipeline(
             stake_quote_amount=selected_settings.stake_quote_amount,
             profile=selected_settings.profile,

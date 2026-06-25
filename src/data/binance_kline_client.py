@@ -20,7 +20,7 @@ class BinanceRequestError(RuntimeError):
 
 @dataclass(frozen=True)
 class BinanceKline:
-    """Minimal parsed Binance kline fields required for Candle conversion."""
+    """Public Binance Spot kline fields used by price and order-flow features."""
 
     open_time_ms: int
     open: float
@@ -28,6 +28,11 @@ class BinanceKline:
     low: float
     close: float
     volume: float
+    close_time_ms: int | None = None
+    quote_volume: float = 0.0
+    trade_count: int = 0
+    taker_buy_base_volume: float = 0.0
+    taker_buy_quote_volume: float = 0.0
 
 
 def _validate_kline_request(symbol: str, interval: str, start_time_ms: int, limit: int) -> None:
@@ -53,6 +58,11 @@ def _parse_binance_kline(raw_kline: list[Any]) -> BinanceKline:
         low=float(raw_kline[3]),
         close=float(raw_kline[4]),
         volume=float(raw_kline[5]),
+        close_time_ms=int(raw_kline[6]) if len(raw_kline) > 6 else None,
+        quote_volume=float(raw_kline[7]) if len(raw_kline) > 7 else 0.0,
+        trade_count=int(raw_kline[8]) if len(raw_kline) > 8 else 0,
+        taker_buy_base_volume=float(raw_kline[9]) if len(raw_kline) > 9 else 0.0,
+        taker_buy_quote_volume=float(raw_kline[10]) if len(raw_kline) > 10 else 0.0,
     )
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from src.common.paths import CONFIGS_DIR, DATA_DIR, LOGS_DIR, REPORTS_DIR
 from src.common.runtime_state import default_runtime_state, save_runtime_state
 from src.data.data_catalog import save_data_catalog
+from src.data.live_microstructure import request_live_microstructure_collector_stop
 
 
 @dataclass(frozen=True)
@@ -33,8 +34,18 @@ def clean_downloaded_data_and_reports() -> CleanProjectDataResult:
     """Delete downloaded market data and reports; keep code/config folders/memory/docs/tests."""
     deleted: list[str] = []
     kept = [str(CONFIGS_DIR), str(DATA_DIR), str(REPORTS_DIR)]
+    request_live_microstructure_collector_stop()
     _delete_children(DATA_DIR / "candles", deleted)
-    for optional_dir in (DATA_DIR / "realtime", DATA_DIR / "live", DATA_DIR / "microstructure", DATA_DIR / "agg_trades", DATA_DIR / "trades"):
+    for optional_dir in (
+        DATA_DIR / "realtime",
+        DATA_DIR / "live",
+        DATA_DIR / "microstructure",
+        DATA_DIR / "live_microstructure",
+        DATA_DIR / "agg_trades",
+        DATA_DIR / "market_features",
+        DATA_DIR / "trades",
+        DATA_DIR / "exchange_info",
+    ):
         _delete_children(optional_dir, deleted)
     _delete_children(REPORTS_DIR / "backtests", deleted)
     if LOGS_DIR.exists():

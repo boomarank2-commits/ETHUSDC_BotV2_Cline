@@ -69,17 +69,25 @@ Allowed when validated and time-safe:
 
 - ETHUSDC 1m candles as main base
 - derived timeframes from ETHUSDC candles: 5m, 15m, 30m, 1h, 4h, 1d
-- ETHUSDC trades
+- complete Binance kline quote-volume, trade-count and taker-buy fields
 - ETHUSDC aggTrades
 - exchange_info and Binance rules
 - fee model
 - slippage model
 - BTCUSDC context if valid
 - ETHBTC relative ETH strength if valid
+- ETHUSDT liquid ETH price-discovery context if valid
+- USDCUSDT quote/stablecoin context if valid
 - bookTicker if live-collected and validated
 - orderbook snapshots / depth if live-collected and validated
 
 Orderbook and bookTicker data may enter the backtest only after they exist historically for that tested point and are clean enough. A practical minimum is at least 30 days of live-collected, gap-aware, lookahead-safe data.
+
+Before every UI-started Smoke or Full run, one shared readiness workflow checks
+and updates the same required dataset. Missing/partial/stale market data blocks
+the run instead of silently falling back. Raw trades are not separately
+duplicated while aggTrades and kline trade counts provide the selected compact
+historical order-flow basis.
 
 ## What must be patched now
 

@@ -6,8 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
+from src.data.agg_trade_data_ensure import load_agg_trade_data_status
+from src.data.candle_csv_io import candle_csv_has_order_flow_fields
 from src.data.candle_quality import CandleQualityReport, build_candle_quality_report
+from src.data.data_catalog import load_data_catalog
 from src.data.derived_timeframes import build_derived_timeframe_counts
+from src.data.live_microstructure import load_live_microstructure_status
 from src.data.local_candle_loader import (
     build_local_candle_quality_from_catalog,
     load_local_candle_dataset_from_catalog,
@@ -31,14 +35,18 @@ class DataPreparationReport:
     usable_for_backtest: bool
     reason: str | None
     ethusdc_1m_available: bool = True
+    enhanced_kline_fields_available: bool = False
     derived_timeframes_available: bool = False
     derived_timeframe_candle_counts: dict[str, int] | None = None
     btcusdc_context_available: bool = False
     ethbtc_context_available: bool = False
+    ethusdt_context_available: bool = False
+    usdcusdt_context_available: bool = False
     trades_available: bool = False
     agg_trades_available: bool = False
     bookticker_available: bool = False
     orderbook_available: bool = False
+    live_microstructure_usable_for_backtest: bool = False
     data_source_status: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
@@ -72,6 +80,13 @@ def _status(available: bool) -> str:
     return "available" if available else "missing"
 
 
+def _catalog_path(symbol: str) -> Path | None:
+    for entry in load_data_catalog():
+        if entry.symbol == symbol and entry.interval == "1m":
+            return Path(entry.path)
+    return None
+
+
 def build_data_preparation_report(
     run_id: str,
     quality: CandleQualityReport | None = None,
@@ -88,16 +103,35 @@ def build_data_preparation_report(
     usable_for_backtest = quality.has_required_lookback and quality.detected_gaps == 0
     btcusdc_available = _context_available("BTCUSDC")
     ethbtc_available = _context_available("ETHBTC")
+    ethusdt_available = _context_available("ETHUSDT")
+    usdcusdt_available = _context_available("USDCUSDT")
+    ethusdc_path = _catalog_path("ETHUSDC")
+    enhanced_klines_available = (
+        ethusdc_path is not None and candle_csv_has_order_flow_fields(ethusdc_path)
+    )
+    agg_trade_status = load_agg_trade_data_status()
+    agg_trades_available = bool(agg_trade_status and agg_trade_status.success)
+    live_status = load_live_microstructure_status()
+    live_available = bool(live_status and live_status.sample_count > 0)
+    live_usable = bool(live_status and live_status.usable_for_backtest)
+    live_source_status = (
+        "available"
+        if live_usable
+        else ("collecting_not_mature" if live_available else "not_started")
+    )
     derived_available = bool(derived_counts) and any(count > 0 for count in derived_counts.values())
     data_source_status = {
         "ETHUSDC 1m": _status(True),
+        "enhanced kline order flow": _status(enhanced_klines_available),
         "derived_timeframes": _status(derived_available),
         "BTCUSDC context": _status(btcusdc_available),
         "ETHBTC context": _status(ethbtc_available),
-        "trades": "missing",
-        "aggTrades": "missing",
-        "bookTicker": "not_ready",
-        "orderbook": "not_ready",
+        "ETHUSDT context": _status(ethusdt_available),
+        "USDCUSDT context": _status(usdcusdt_available),
+        "trades": "rejected_redundant_raw_source",
+        "aggTrades": _status(agg_trades_available),
+        "bookTicker": live_source_status,
+        "orderbook": live_source_status,
     }
     return DataPreparationReport(
         run_id=run_id,
@@ -111,14 +145,18 @@ def build_data_preparation_report(
         usable_for_backtest=usable_for_backtest,
         reason=_build_unusable_reason(quality.has_required_lookback, quality.detected_gaps),
         ethusdc_1m_available=True,
+        enhanced_kline_fields_available=enhanced_klines_available,
         derived_timeframes_available=derived_available,
         derived_timeframe_candle_counts=derived_counts,
         btcusdc_context_available=btcusdc_available,
         ethbtc_context_available=ethbtc_available,
+        ethusdt_context_available=ethusdt_available,
+        usdcusdt_context_available=usdcusdt_available,
         trades_available=False,
-        agg_trades_available=False,
-        bookticker_available=False,
-        orderbook_available=False,
+        agg_trades_available=agg_trades_available,
+        bookticker_available=live_available,
+        orderbook_available=live_available,
+        live_microstructure_usable_for_backtest=live_usable,
         data_source_status=data_source_status,
     )
 

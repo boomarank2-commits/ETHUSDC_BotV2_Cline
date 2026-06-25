@@ -13,6 +13,11 @@ class Candle:
     low: float
     close: float
     volume: float
+    quote_volume: float = 0.0
+    trade_count: int = 0
+    taker_buy_base_volume: float = 0.0
+    taker_buy_quote_volume: float = 0.0
+    close_time: str | None = None
 
     def __post_init__(self) -> None:
         if not self.open_time:
@@ -31,6 +36,19 @@ class Candle:
 
         if self.volume < 0:
             msg = "volume must not be negative"
+            raise ValueError(msg)
+
+        for field_name, value in (
+            ("quote_volume", self.quote_volume),
+            ("taker_buy_base_volume", self.taker_buy_base_volume),
+            ("taker_buy_quote_volume", self.taker_buy_quote_volume),
+        ):
+            if value < 0:
+                msg = f"{field_name} must not be negative"
+                raise ValueError(msg)
+
+        if self.trade_count < 0:
+            msg = "trade_count must not be negative"
             raise ValueError(msg)
 
         if self.high < max(self.open, self.close, self.low):

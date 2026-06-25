@@ -72,13 +72,16 @@ def test_missing_optional_data_sources_are_reported_honestly(tmp_path: Path) -> 
     assert report.orderbook_available is False
     assert report.data_source_status == {
         "ETHUSDC 1m": "available",
+        "enhanced kline order flow": "available",
         "derived_timeframes": "missing",
         "BTCUSDC context": "missing",
         "ETHBTC context": "missing",
-        "trades": "missing",
+        "ETHUSDT context": "missing",
+        "USDCUSDT context": "missing",
+        "trades": "rejected_redundant_raw_source",
         "aggTrades": "missing",
-        "bookTicker": "not_ready",
-        "orderbook": "not_ready",
+        "bookTicker": "not_started",
+        "orderbook": "not_started",
     }
 
 

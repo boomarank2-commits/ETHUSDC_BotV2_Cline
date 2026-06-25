@@ -23,7 +23,13 @@ The project needs enough historical data for:
 ## Confirmed Current Base
 
 Confirmed starting point:
-- ETHUSDC candles / klines
+- ETHUSDC 1m candles / klines
+- BTCUSDC and ETHBTC 1m context candles
+- ETHUSDT 1m liquid ETH price-discovery context
+- USDCUSDT 1m quote/stablecoin context
+- Binance kline quote volume, trade count and taker-buy fields
+- historical ETHUSDC aggTrades from official Binance public archives, compacted
+  into minute features
 - Binance exchange_info
 - Binance filters / rules
 - fee model
@@ -40,17 +46,39 @@ Derived timeframes may be generated from validated 1m candles, for example:
 
 These derived timeframes must be built without lookahead. A higher timeframe candle may only be used after it would have been closed at that historical point.
 
-## Optional Context Data
+## Automatic UI Data Readiness
 
-Optional context may be used only when valid and time-safe:
+Every Smoke 1/7/14/30 and Full button uses the same central readiness workflow
+before the shared backtest pipeline starts.
+
+- Missing candle files are downloaded.
+- Partial candle files are resumed/backfilled.
+- Candle and exchange-info data older than seven days are refreshed.
+- Legacy six-column candle files are replaced once so historical Binance
+  order-flow fields are not silently filled with false zero values.
+- Missing official aggTrade archive partitions are downloaded. The newest two
+  days are intentionally excluded because Binance archives may not yet exist.
+- The live public spread/depth collector is started or its heartbeat is checked.
+
+The first run can transfer several gigabytes. Later runs are incremental.
+
+## Context and Microstructure Data
+
+Context may be used only when valid and time-safe:
 - BTCUSDC as market context
 - ETHBTC as relative ETH strength
-- ETHUSDC trades
+- ETHUSDT as the more liquid ETH price-discovery venue
+- USDCUSDT as quote/stablecoin context
 - ETHUSDC aggTrades
 - bookTicker
 - orderbook snapshots / depth data
 
 A missing optional source must not silently become assumed truth.
+
+Raw ETHUSDC trades are historically downloadable, but are not duplicated in the
+initial local dataset because aggTrades plus kline trade counts retain the
+required signal at materially lower storage cost. This is a documented rejection,
+not a claim that raw trades do not exist.
 
 ## Orderbook / BookTicker Rule
 

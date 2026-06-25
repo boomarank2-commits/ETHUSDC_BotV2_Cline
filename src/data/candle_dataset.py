@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from src.common.config import CONFIG
 from src.data.candle_schema import Candle
 
-ALLOWED_CANDLE_SYMBOLS = (CONFIG.symbol, "BTCUSDC", "ETHBTC")
+ALLOWED_CANDLE_SYMBOLS = (
+    CONFIG.symbol,
+    "BTCUSDC",
+    "ETHBTC",
+    "ETHUSDT",
+    "USDCUSDT",
+)
 
 
 @dataclass(frozen=True)

@@ -1300,3 +1300,37 @@ Tests:
 
 Next:
 - UI-nahen Smoke fuer Report-/Coverage-Pruefung; danach training-only Nutzen einzelner HTF-Metriken untersuchen.
+
+## 2026-06-25 - Gemeinsame automatische ETH-Datenbereitschaft erweitert
+
+Changed:
+- Smoke 1/7/14/30 und Full prüfen über denselben UI-Controller-Pfad alle
+  verpflichtenden Daten vor dem Pipeline-Start.
+- ETHUSDC, BTCUSDC, ETHBTC, ETHUSDT und USDCUSDT 1m werden fehlend geladen,
+  unvollständig backfilled und nach sieben Tagen aktualisiert.
+- Binance Kline Quote-Volumen, Trade Count, Taker-Buy und Close-Time werden
+  dauerhaft in Candle/CSV/Derived-Timeframes erhalten.
+- Offizielle historische ETHUSDC aggTrades werden inkrementell geladen und zu
+  lookahead-sicheren Minutenfeatures verdichtet.
+- Öffentliche ETHUSDC Spread-/Top-20-Depth-Snapshots werden append-only
+  gesammelt; Nutzung bleibt bis mindestens 30 echte Tage gesperrt.
+- Data Preparation/Data Overview unterscheiden Verfügbarkeit und tatsächliche
+  Router-/Backtest-Nutzung ehrlich.
+- Clean stoppt den Live-Collector und entfernt auch aggTrade-, Microstructure-
+  und exchange_info-Daten.
+- README, Truth-Dokumente, UI-/Acceptance-Spec und Open Questions aktualisiert.
+
+Tests:
+- `python -m compileall src tests` green.
+- `python -m pytest -q` green.
+
+Not done:
+- Kein echter Download/Smoke in dieser Code-Änderung gestartet.
+- Keine neuen Daten aggressiv in Gates, Scores oder Kandidatenauswahl eingebaut.
+- Keine echten Orders, kein Paper/Live-Trading.
+
+Next:
+- Ersten sichtbaren UI-Start durchführen; initialer Download kann mehrere
+  Gigabyte und längere Zeit benötigen.
+- Danach training-only Nutzen der neuen Quellen einzeln prüfen und erst nach
+  Beleg als Router-Feature anschließen.

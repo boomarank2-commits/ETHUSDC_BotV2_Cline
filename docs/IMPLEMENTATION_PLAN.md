@@ -32,11 +32,23 @@ Create Python project skeleton with config loading, logging, tests and placehold
 
 ## Phase 2 - Data Layer
 
-Status: done enough for current backtest core
+Status: automatic availability layer implemented; feature adoption remains staged
 
 Goal:
-Load or download ETHUSDC historical data.
-Validate time ranges and data quality.
+Load/update the shared ETHUSDC historical dataset before every UI backtest.
+Validate time ranges, freshness and data quality.
+
+Implemented availability:
+
+- ETHUSDC, BTCUSDC, ETHBTC, ETHUSDT and USDCUSDT 1m klines
+- complete Binance kline order-flow columns
+- ETHUSDC exchange_info
+- compact official ETHUSDC aggTrade minute features
+- append-only live ETHUSDC spread/depth collection
+
+Availability does not automatically authorize a new strategy. New data must be
+wired into training/router features in small lookahead-safe steps and proven
+without blindtest learning.
 
 ## Phase 3 - Feature Layer
 

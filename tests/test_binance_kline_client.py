@@ -59,13 +59,35 @@ def test_valid_response_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         client_module,
         "urlopen",
-        lambda url, timeout: _FakeResponse([[1, "100", "110", "90", "105", "12"]]),
+        lambda url, timeout: _FakeResponse(
+            [
+                [
+                    1,
+                    "100",
+                    "110",
+                    "90",
+                    "105",
+                    "12",
+                    59_999,
+                    "1260",
+                    42,
+                    "7",
+                    "735",
+                    "0",
+                ]
+            ]
+        ),
     )
 
     klines = fetch_binance_klines("ETHUSDC", "1m", 1)
 
     assert klines[0].open_time_ms == 1
     assert klines[0].close == 105.0
+    assert klines[0].close_time_ms == 59_999
+    assert klines[0].quote_volume == 1260.0
+    assert klines[0].trade_count == 42
+    assert klines[0].taker_buy_base_volume == 7.0
+    assert klines[0].taker_buy_quote_volume == 735.0
 
 
 def test_wrong_symbol_is_rejected() -> None:

@@ -8,9 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
+from src.data.agg_trade_data_ensure import load_agg_trade_data_status
+from src.data.candle_csv_io import candle_csv_has_order_flow_fields
 from src.data.candle_quality import EXPECTED_MIN_CANDLES
+from src.data.data_catalog import load_data_catalog
 from src.data.data_inventory import BACKTEST_DATA_INVENTORY
 from src.data.exchange_info import ensure_exchange_info_current
+from src.data.live_microstructure import load_live_microstructure_status
 from src.data.local_candle_loader import build_local_candle_quality_from_catalog
 
 DATA_OVERVIEW_REPORT_FILENAME = "data_overview_report.json"
@@ -105,6 +109,7 @@ def _context_candle_status(symbol: str, label: str) -> DataAreaStatus:
         )
     age_hours = _age_hours(quality.last_open_time)
     usable = quality.has_required_lookback and quality.detected_gaps == 0
+    used = usable and symbol in {"BTCUSDC", "ETHBTC"}
     return DataAreaStatus(
         data_kind=f"{symbol.lower()}_klines_1m",
         label=label,
@@ -117,8 +122,16 @@ def _context_candle_status(symbol: str, label: str) -> DataAreaStatus:
         expected_min_rows=EXPECTED_MIN_CANDLES,
         detected_gaps=quality.detected_gaps,
         usable_for_backtest=usable,
-        used_in_backtest=usable,
-        usage_reason="optional Strategy V1 context filter" if usable else "context not usable",
+        used_in_backtest=used,
+        usage_reason=(
+            "Strategy V1 context filter"
+            if used
+            else (
+                "downloaded for later router feature wiring"
+                if usable
+                else "context not usable"
+            )
+        ),
     )
 
 
@@ -140,6 +153,86 @@ def _exchange_info_status() -> DataAreaStatus:
         usage_reason="MIN_NOTIONAL, LOT_SIZE stepSize/minQty and PRICE_FILTER tickSize used by Strategy V1 simulation"
         if status.usable_for_backtest
         else f"exchange_info unavailable: {status.reason}",
+    )
+
+
+def _enhanced_kline_status() -> DataAreaStatus:
+    path = next(
+        (
+            item.path
+            for item in load_data_catalog()
+            if item.symbol == "ETHUSDC" and item.interval == "1m"
+        ),
+        None,
+    )
+    available = path is not None and candle_csv_has_order_flow_fields(Path(path))
+    return DataAreaStatus(
+        data_kind="enhanced_kline_order_flow",
+        label="ETHUSDC Kline Quote/Trade/Taker Fields",
+        status="current" if available else "not_available",
+        path=path,
+        first_timestamp=None,
+        last_timestamp=None,
+        data_age_hours=None,
+        row_count=None,
+        expected_min_rows=EXPECTED_MIN_CANDLES,
+        detected_gaps=None,
+        usable_for_backtest=available,
+        used_in_backtest=False,
+        usage_reason=(
+            "downloaded for later time-safe order-flow feature wiring"
+            if available
+            else "legacy candle CSV lacks Binance quote/trade/taker fields"
+        ),
+    )
+
+
+def _agg_trade_status() -> DataAreaStatus:
+    status = load_agg_trade_data_status()
+    available = bool(status and status.success)
+    return DataAreaStatus(
+        data_kind="ethusdc_agg_trades",
+        label="ETHUSDC aggTrades 1m Features",
+        status="current" if available else "not_available",
+        path=status.output_path if status else None,
+        first_timestamp=status.first_partition if status else None,
+        last_timestamp=status.last_partition if status else None,
+        data_age_hours=None,
+        row_count=status.partition_count if status else 0,
+        expected_min_rows=None,
+        detected_gaps=None,
+        usable_for_backtest=available,
+        used_in_backtest=False,
+        usage_reason=(
+            "official Binance archives downloaded; router feature wiring is a later patch"
+            if available
+            else "official Binance archive partitions are incomplete"
+        ),
+    )
+
+
+def _live_microstructure_status(data_kind: str, label: str) -> DataAreaStatus:
+    status = load_live_microstructure_status()
+    collecting = bool(status and status.success and status.sample_count > 0)
+    usable = bool(status and status.usable_for_backtest)
+    return DataAreaStatus(
+        data_kind=data_kind,
+        label=label,
+        status="current" if usable else ("collecting" if collecting else "not_available"),
+        path=status.output_path if status else None,
+        first_timestamp=status.first_sample_time if status else None,
+        last_timestamp=status.last_sample_time if status else None,
+        data_age_hours=_age_hours(status.last_sample_time) if status else None,
+        row_count=status.sample_count if status else 0,
+        expected_min_rows=30 * 24 * 60,
+        detected_gaps=None,
+        usable_for_backtest=usable,
+        used_in_backtest=False,
+        usage_reason=(
+            "minimum 30-day live history reached; router wiring still requires validation"
+            if usable
+            else "live collection active; minimum 30 clean days required before backtest use"
+        ),
     )
 
 
@@ -191,13 +284,19 @@ def build_data_overview_report(run_id: str) -> DataOverviewReport:
         generated_at=datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         areas=[
             _ethusdc_candle_status(),
+            _enhanced_kline_status(),
             _exchange_info_status(),
             _context_candle_status("BTCUSDC", "BTCUSDC 1m Candles"),
             _context_candle_status("ETHBTC", "ETHBTC 1m Candles"),
-            _inventory_not_available_status("ethusdc_agg_trades"),
+            _context_candle_status("ETHUSDT", "ETHUSDT 1m Candles"),
+            _context_candle_status("USDCUSDT", "USDCUSDT 1m Candles"),
+            _agg_trade_status(),
             _inventory_not_available_status("ethusdc_trades"),
-            _inventory_not_available_status("bookticker_spread"),
-            _inventory_not_available_status("orderbook_depth_liquidity"),
+            _live_microstructure_status("bookticker_spread", "bookTicker / Spread"),
+            _live_microstructure_status(
+                "orderbook_depth_liquidity",
+                "Orderbook / Depth / Liquidity",
+            ),
         ],
     )
 

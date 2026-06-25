@@ -32,10 +32,13 @@ def test_data_overview_marks_ethusdc_candles_as_used(monkeypatch) -> None:
     ethusdc = next(area for area in report.areas if area.data_kind == "ethusdc_klines_1m")
     exchange_info = next(area for area in report.areas if area.data_kind == "exchange_info")
     btc = next(area for area in report.areas if area.data_kind == "btcusdc_klines_1m")
+    ethusdt = next(area for area in report.areas if area.data_kind == "ethusdt_klines_1m")
     assert ethusdc.used_in_backtest is True
     assert exchange_info.usable_for_backtest is True
     assert exchange_info.used_in_backtest is True
     assert btc.used_in_backtest is True
+    assert ethusdt.usable_for_backtest is True
+    assert ethusdt.used_in_backtest is False
 
 
 def test_data_overview_save_and_load(monkeypatch) -> None:

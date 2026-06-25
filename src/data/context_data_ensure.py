@@ -11,14 +11,18 @@ from src.data.binance_candle_downloader import (
     ONE_MINUTE_MS,
     _open_time_to_ms,
     _utc_now_ms,
+    download_ethusdc_1m_candles,
     update_ethusdc_1m_candles,
 )
-from src.data.candle_csv_io import load_candle_dataset_from_csv
+from src.data.candle_csv_io import (
+    candle_csv_has_order_flow_fields,
+    load_candle_dataset_from_csv,
+)
 from src.data.candle_quality import build_candle_quality_report
 from src.data.data_catalog import CandleDataCatalogEntry, upsert_data_catalog_entry
 from src.data.train_blind_split import REQUIRED_CANDLE_COUNT
 
-CONTEXT_SYMBOLS = ("BTCUSDC", "ETHBTC")
+CONTEXT_SYMBOLS = ("BTCUSDC", "ETHBTC", "ETHUSDT", "USDCUSDT")
 CONTEXT_MAX_AGE_DAYS = 7
 DOWNLOAD_BUFFER_DAYS = 2
 
@@ -74,6 +78,38 @@ def ensure_context_1m_data_ready(
     try:
         _emit(progress_callback, {"phase": "context_data_check", "symbol": symbol, "mode": "checking"})
         if target_path.exists():
+            if not candle_csv_has_order_flow_fields(target_path):
+                start_time_ms = (
+                    _utc_now_ms()
+                    - (REQUIRED_CANDLE_COUNT + DOWNLOAD_BUFFER_DAYS * 24 * 60)
+                    * ONE_MINUTE_MS
+                )
+                download_ethusdc_1m_candles(
+                    start_time_ms=start_time_ms,
+                    end_time_ms=_utc_now_ms(),
+                    output_path=target_path,
+                    progress_callback=progress_callback,
+                    symbol=symbol,
+                    replace_existing=True,
+                )
+                success, message, candle_count, last_open_time = _validate_context_dataset(
+                    symbol,
+                    target_path,
+                )
+                if success:
+                    _upsert_context_catalog(symbol, target_path)
+                return ContextDataEnsureResult(
+                    symbol,
+                    success,
+                    f"{symbol} refreshed with complete Binance kline order-flow fields",
+                    candle_count,
+                    last_open_time,
+                    True,
+                    False,
+                    str(target_path),
+                    None if success else message,
+                )
+
             success, message, candle_count, last_open_time = _validate_context_dataset(symbol, target_path)
             if success:
                 _upsert_context_catalog(symbol, target_path)

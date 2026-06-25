@@ -45,3 +45,42 @@ Old files are not truth.
 - Windows: Doppelklick auf `ETHUSDC_BotV2_UI_starten.bat`
 - Alternative per PowerShell:
   `python -m src.ui.app`
+
+## Automatische Datenbereitstellung beim Backtest
+
+Der Button für Smoke- oder Full-Backtest startet immer zuerst denselben zentralen
+Datencheck. Fehlende Daten werden geladen, unvollständige Downloads werden
+fortgesetzt und veraltete Daten werden aktualisiert. Erst wenn alle aktuell
+verpflichtenden Quellen brauchbar sind, startet die gemeinsame Backtest-Pipeline.
+
+Automatisch geprüft werden:
+
+- ETHUSDC 1m als Hauptmarkt
+- BTCUSDC und ETHBTC als bereits verwendeter Markt-/Stärkekontext
+- ETHUSDT als liquider ETH-Preisfindungskontext
+- USDCUSDT als Stablecoin-/Quote-Kontext
+- vollständige Binance-Kline-Felder: Quote-Volumen, Trade Count und Taker-Buy-Volumen
+- ETHUSDC `exchangeInfo` mit Spot-Filtern
+- historische ETHUSDC `aggTrades` aus offiziellen Binance-Archiven, verdichtet auf
+  lookahead-sichere Minutenmerkmale
+- öffentliche ETHUSDC Best-Bid/Ask- und Top-20-Depth-Snapshots als fortlaufende
+  lokale Live-Datensammlung
+
+Kline- und `exchangeInfo`-Daten gelten nach spätestens sieben Tagen als
+aktualisierungsbedürftig. Bei `aggTrades` wird die offizielle
+Archiv-Veröffentlichungsverzögerung berücksichtigt. Der erste Start kann wegen
+des mehrjährigen Datenumfangs lange dauern und mehrere Gigabyte übertragen.
+Spätere Starts laden nur fehlende oder neue Bereiche.
+
+Historische Raw-Trades werden zunächst nicht zusätzlich gespeichert:
+`aggTrades` plus der Kline-Trade-Count erhalten die benötigte
+Orderflow-Information mit deutlich weniger Speicherbedarf. BookTicker und
+Orderbuch werden nicht rückwirkend erfunden. Sie dürfen erst nach mindestens
+30 Tagen echter, sauberer Sammlung als Backtestquelle bewertet werden.
+
+Smoke 1/7/14/30 und Full verwenden für Datencheck, Features, Router und Simulation
+denselben Codepfad. Alle Läufe bleiben reine Simulation; es werden keine API-Keys
+benötigt und keine Orders ausgelöst.
+
+Wichtig: Mehr Daten verbessern die Untersuchungsbasis, garantieren aber weder
+Profit noch ein Ziel von 3 USDC pro Tag.

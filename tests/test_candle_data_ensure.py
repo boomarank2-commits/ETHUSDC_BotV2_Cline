@@ -190,6 +190,32 @@ def test_incomplete_csv_emits_rebuild_mode(
     assert "resume_partial_download" in [event.get("mode") for event in events]
 
 
+def test_incomplete_legacy_csv_is_replaced_instead_of_mixing_zero_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    fast_paths: Path,
+) -> None:
+    fast_paths.write_text(
+        "open_time,open,high,low,close,volume\n"
+        "2026-01-01T00:00:00Z,100,101,99,100,1\n",
+        encoding="utf-8",
+    )
+    captured_replace_existing = False
+
+    def fake_download(**kwargs):
+        nonlocal captured_replace_existing
+        captured_replace_existing = kwargs["replace_existing"]
+        save_candle_dataset_to_csv(_dataset(5), kwargs["output_path"])
+        return _dataset(5)
+
+    monkeypatch.setattr(ensure_module, "download_ethusdc_1m_candles", fake_download)
+
+    result = ensure_module.ensure_ethusdc_1m_data_ready()
+
+    assert result.success is True
+    assert result.full_download is True
+    assert captured_replace_existing is True
+
+
 def test_incomplete_csv_failed_rebuild_stays_failed(
     monkeypatch: pytest.MonkeyPatch, fast_paths: Path
 ) -> None:

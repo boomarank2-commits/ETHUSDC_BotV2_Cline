@@ -492,3 +492,29 @@ Ein Patch gilt erst als Fortschritt, wenn er durch Spezifikation, Tests und UI-n
 
 
 
+\## Zusätzliche Datenbereitschafts-Tests
+
+
+
+Es muss außerdem getestet werden:
+
+
+
+\* Smoke und Full rufen denselben zentralen Daten-Ensure-Pfad auf.
+
+\* Legacy-Candle-CSV ohne Binance-Orderflow-Spalten wird vollständig ersetzt.
+
+\* ETHUSDT und USDCUSDT bleiben Kontextdaten; Hauptmarkt bleibt ETHUSDC/USDC.
+
+\* Kline Quote-Volumen, Trade Count und Taker-Buy-Felder bleiben beim Speichern erhalten.
+
+\* aggTrades werden ohne Lookahead minutenweise verdichtet.
+
+\* Tages- und Monatsarchive werden ohne Veröffentlichungslücke am Monatswechsel geplant.
+
+\* Live Spread/Depth startet keine Doppel-Sammlung bei aktuellem Heartbeat.
+
+\* Live Spread/Depth wird vor ausreichender echter Abdeckung nicht als Backtestquelle verwendet.
+
+
+

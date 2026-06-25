@@ -22,6 +22,13 @@ def _minute_candles(count: int, start: str = "2026-01-01T00:00:00") -> list[Cand
                 low=open_price - 1.0,
                 close=open_price + 0.5,
                 volume=1.0 + offset,
+                quote_volume=10.0 + offset,
+                trade_count=offset + 1,
+                taker_buy_base_volume=0.5 + offset,
+                taker_buy_quote_volume=5.0 + offset,
+                close_time=(
+                    start_time + timedelta(minutes=offset + 1)
+                ).isoformat(timespec="seconds"),
             )
         )
     return candles
@@ -38,6 +45,11 @@ def test_derive_5m_candles_aggregates_ohlcv_from_1m_candles() -> None:
     assert first.low == 99.0
     assert first.close == 104.5
     assert first.volume == 15.0
+    assert first.quote_volume == 60.0
+    assert first.trade_count == 15
+    assert first.taker_buy_base_volume == 12.5
+    assert first.taker_buy_quote_volume == 35.0
+    assert first.close_time == "2026-01-01T00:05:00"
 
 
 def test_partial_higher_timeframe_candle_is_not_returned_as_closed_feature() -> None:

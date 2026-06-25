@@ -5,6 +5,7 @@ import pytest
 
 from src.data.candle_csv_io import (
     CANDLE_CSV_FIELDS,
+    candle_csv_has_order_flow_fields,
     load_candle_dataset_from_csv,
     save_candle_dataset_to_csv,
 )
@@ -104,3 +105,30 @@ def test_save_uses_atomic_temp_file_without_leftover(tmp_path: Path) -> None:
 
     assert csv_path.is_file()
     assert not csv_path.with_suffix(".csv.tmp").exists()
+
+
+def test_legacy_six_field_csv_remains_loadable_but_is_marked_for_refresh(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "legacy.csv"
+    csv_path.write_text(
+        "open_time,open,high,low,close,volume\n"
+        "2026-01-01T00:00:00Z,100,110,90,105,1\n",
+        encoding="utf-8",
+    )
+
+    dataset = load_candle_dataset_from_csv(csv_path)
+
+    assert dataset.candles[0].quote_volume == 0.0
+    assert dataset.candles[0].trade_count == 0
+    assert candle_csv_has_order_flow_fields(csv_path) is False
+
+
+def test_complete_candle_csv_is_marked_as_having_order_flow_fields(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "candles.csv"
+
+    save_candle_dataset_to_csv(_dataset(), csv_path)
+
+    assert candle_csv_has_order_flow_fields(csv_path) is True

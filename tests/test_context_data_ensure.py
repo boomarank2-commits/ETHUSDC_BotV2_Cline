@@ -30,3 +30,40 @@ def test_existing_complete_context_csv_is_upserted_to_catalog(monkeypatch: pytes
     assert result.success is True
     entries = load_data_catalog()
     assert [(entry.symbol, entry.interval, entry.path) for entry in entries] == [("BTCUSDC", "1m", str(btc_path))]
+
+
+def test_legacy_context_csv_is_fully_replaced_before_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    btc_path = tmp_path / "BTCUSDC_1m.csv"
+    btc_path.write_text(
+        "open_time,open,high,low,close,volume\n"
+        "2026-01-01T00:00:00Z,100,101,99,100,1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(context_module, "REQUIRED_CANDLE_COUNT", 1)
+    monkeypatch.setattr(context_module, "_is_current", lambda last_open_time: True)
+    monkeypatch.setattr(
+        context_module,
+        "DEFAULT_CONTEXT_CANDLE_PATHS",
+        {"BTCUSDC": btc_path},
+    )
+    replace_existing = False
+
+    def fake_download(**kwargs):
+        nonlocal replace_existing
+        replace_existing = kwargs["replace_existing"]
+        save_candle_dataset_to_csv(_dataset("BTCUSDC", 1), kwargs["output_path"])
+        return _dataset("BTCUSDC", 1)
+
+    monkeypatch.setattr(
+        context_module,
+        "download_ethusdc_1m_candles",
+        fake_download,
+    )
+
+    result = context_module.ensure_context_1m_data_ready("BTCUSDC")
+
+    assert result.success is True
+    assert replace_existing is True

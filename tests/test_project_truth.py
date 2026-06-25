@@ -20,13 +20,9 @@ def test_main_ui_source_does_not_show_wrong_quote_asset() -> None:
     assert "Einsatz pro Trade (USDC):" in source
 
 
-def test_no_wrong_symbol_in_source_tests_docs_or_readme() -> None:
-    forbidden_symbol = "ETH" + "USD" + "T"
-    paths = list(Path("src").rglob("*.py"))
-    paths += list(Path("tests").rglob("*.py"))
-    paths += list(Path("docs").rglob("*.md"))
-    if Path("README.md").exists():
-        paths.append(Path("README.md"))
+def test_ethusdt_context_does_not_change_primary_trading_symbol() -> None:
+    source = Path("src/data/binance_candle_downloader.py").read_text(encoding="utf-8")
 
-    for path in paths:
-        assert forbidden_symbol not in path.read_text(encoding="utf-8")
+    assert '"ETHUSDT"' in source
+    assert CONFIG.symbol == "ETHUSDC"
+    assert CONFIG.quote_asset == "USDC"

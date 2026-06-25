@@ -17,6 +17,8 @@ DEFAULT_BINANCE_CANDLE_PATH = DATA_DIR / "candles" / "ETHUSDC_1m.csv"
 DEFAULT_CONTEXT_CANDLE_PATHS = {
     "BTCUSDC": DATA_DIR / "candles" / "BTCUSDC_1m.csv",
     "ETHBTC": DATA_DIR / "candles" / "ETHBTC_1m.csv",
+    "ETHUSDT": DATA_DIR / "candles" / "ETHUSDT_1m.csv",
+    "USDCUSDT": DATA_DIR / "candles" / "USDCUSDT_1m.csv",
 }
 ONE_MINUTE_MS = 60_000
 MAX_EMPTY_PAGES = 1
@@ -30,6 +32,13 @@ def binance_kline_to_candle(kline: BinanceKline) -> Candle:
     open_time = datetime.fromtimestamp(kline.open_time_ms / 1000, tz=UTC).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
+    close_time = (
+        datetime.fromtimestamp(kline.close_time_ms / 1000, tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        if kline.close_time_ms is not None
+        else None
+    )
     return Candle(
         open_time=open_time,
         open=kline.open,
@@ -37,6 +46,11 @@ def binance_kline_to_candle(kline: BinanceKline) -> Candle:
         low=kline.low,
         close=kline.close,
         volume=kline.volume,
+        quote_volume=kline.quote_volume,
+        trade_count=kline.trade_count,
+        taker_buy_base_volume=kline.taker_buy_base_volume,
+        taker_buy_quote_volume=kline.taker_buy_quote_volume,
+        close_time=close_time,
     )
 
 
@@ -274,6 +288,7 @@ def download_ethusdc_1m_candles(
     output_path: Path | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     symbol: str = CONFIG.symbol,
+    replace_existing: bool = False,
 ) -> CandleDataset:
     """Download public ETHUSDC 1m klines, save CSV, and update the data catalog."""
     if start_time_ms <= 0:
@@ -284,7 +299,9 @@ def download_ethusdc_1m_candles(
         raise ValueError(msg)
 
     target_path = output_path or _default_candle_path(symbol)
-    existing_dataset = _load_existing_dataset(target_path, symbol=symbol)
+    existing_dataset = (
+        None if replace_existing else _load_existing_dataset(target_path, symbol=symbol)
+    )
     mode = (
         "resume_partial_download"
         if existing_dataset and existing_dataset.candles
@@ -298,6 +315,7 @@ def download_ethusdc_1m_candles(
         mode,
         existing_dataset,
         symbol,
+        resume_from_existing_end=not replace_existing,
     )
     _save_dataset_and_catalog(dataset, target_path)
     return dataset
