@@ -65,11 +65,13 @@ def _fetch_json(path: str, params: dict[str, object]) -> Any:
 def _load_status() -> LiveMicrostructureStatus | None:
     if not LIVE_MICROSTRUCTURE_STATUS_PATH.exists():
         return None
-    return LiveMicrostructureStatus(
-        **json.loads(
-            LIVE_MICROSTRUCTURE_STATUS_PATH.read_text(encoding="utf-8")
-        )
-    )
+    try:
+        raw_status = LIVE_MICROSTRUCTURE_STATUS_PATH.read_text(encoding="utf-8")
+        if not raw_status.strip() or "\x00" in raw_status:
+            return None
+        return LiveMicrostructureStatus(**json.loads(raw_status))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return None
 
 
 def load_live_microstructure_status() -> LiveMicrostructureStatus | None:
@@ -79,10 +81,12 @@ def load_live_microstructure_status() -> LiveMicrostructureStatus | None:
 
 def _save_status(status: LiveMicrostructureStatus) -> None:
     LIVE_MICROSTRUCTURE_DIR.mkdir(parents=True, exist_ok=True)
-    LIVE_MICROSTRUCTURE_STATUS_PATH.write_text(
-        json.dumps(asdict(status), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    content = json.dumps(asdict(status), indent=2, sort_keys=True) + "\n"
+    temp_path = LIVE_MICROSTRUCTURE_STATUS_PATH.with_name(
+        f"{LIVE_MICROSTRUCTURE_STATUS_PATH.name}.{os.getpid()}.tmp"
     )
+    temp_path.write_text(content, encoding="utf-8")
+    temp_path.replace(LIVE_MICROSTRUCTURE_STATUS_PATH)
 
 
 def _coverage_days(first_sample: str | None, last_sample: str | None) -> float:

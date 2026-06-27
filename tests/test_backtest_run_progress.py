@@ -1,4 +1,5 @@
 import pytest
+import src.backtest.run_progress as progress_module
 
 from src.backtest.run_progress import (
     PROGRESS_FILENAME,
@@ -25,6 +26,29 @@ def test_progress_json_is_saved_in_run_report_dir() -> None:
 
     assert progress_path == get_run_report_dir(progress.run_id) / PROGRESS_FILENAME
     assert progress_path.is_file()
+    assert not list(progress_path.parent.glob(f"{PROGRESS_FILENAME}.*.tmp"))
+
+
+def test_progress_save_retries_transient_windows_replace_lock(monkeypatch) -> None:
+    progress = default_run_progress("run_20260612_170020")
+    original_replace = progress_module.Path.replace
+    calls = 0
+
+    def flaky_replace(self, target):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("locked by UI refresh")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(progress_module, "sleep", lambda _: None)
+    monkeypatch.setattr(progress_module.Path, "replace", flaky_replace)
+
+    progress_path = save_run_progress(progress)
+
+    assert calls == 2
+    assert progress_path.is_file()
+    assert load_run_progress(progress.run_id) == progress
 
 
 def test_load_run_progress_loads_same_object() -> None:

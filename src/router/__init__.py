@@ -1,11 +1,30 @@
 """ETHUSDC router package patch layer."""
 
+from array import array
+from bisect import bisect_left
 from dataclasses import asdict, replace
 
 from src.data.derived_timeframes import (
     DerivedTimeframeFeatureSeries,
     build_closed_timeframe_feature_series,
     build_closed_timeframe_feature_snapshots,
+)
+from src.data.agg_trade_feature_series import (
+    AGG_TRADE_METRICS,
+    AggTradeFeatureSeries,
+    build_closed_agg_trade_feature_series,
+)
+from src.data.agg_trade_data_ensure import load_agg_trade_data_status
+from src.data.context_market_features import (
+    CONTEXT_MARKET_METRICS,
+    ContextMarketFeatureSeries,
+    ContextMarketFeatureStore,
+    build_closed_context_market_feature_store,
+)
+from src.data.kline_orderflow_features import (
+    ORDERFLOW_METRICS,
+    KlineOrderflowFeatureSeries,
+    build_closed_kline_orderflow_feature_series,
 )
 
 from . import activity_first_router_report as _r
@@ -32,6 +51,33 @@ def _active_days(trades):
 
 def _is_eth(result):
     return result.candidate.search_pass.startswith("eth_")
+
+
+def _filter_learning_eligible(evaluation):
+    """Allow filters to rescue ETH setups that have gross edge but lose to fees.
+
+    The final filtered candidate is still evaluated by the unchanged activity,
+    fee, profit-factor and drawdown gates.  This only widens which training-only
+    candidates may *attempt* a frozen filter rule.
+    """
+    result = evaluation.result
+    if not _is_eth(result):
+        return False
+    if result.trade_count < 40 or result.winning_trades < 20 or result.losing_trades < 20:
+        return False
+    if result.total_net_pnl > 0:
+        return True
+    if result.total_gross_pnl <= 0:
+        return False
+    fee_to_gross = result.total_fees / result.total_gross_pnl
+    return fee_to_gross <= 1.50
+
+
+def _filter_learning_scope(evaluation):
+    result = evaluation.result
+    if result.total_net_pnl > 0:
+        return "net_positive_eth_candidate"
+    return "gross_edge_fee_rescue_eth_candidate"
 
 
 def _activity_ok(result):
@@ -135,16 +181,14 @@ def _feature_values_for_candidate(evaluation, derived_features, timeframe):
 
 
 def _learn_htf_filter_candidates(evaluations, derived_features, htf_analysis):
-    """Learn at most one deterministic HTF range filter per positive ETH candidate."""
-    candidate_timeframes = [
-        timeframe
-        for timeframe in ("1h", "4h", "1d")
-        if timeframe in htf_analysis["candidate_timeframes_for_future_review"]
-    ]
+    """Learn at most one deterministic HTF range filter per ETH filter candidate."""
+    candidate_timeframes = list(
+        htf_analysis["candidate_timeframes_for_future_review"]
+    )
     learned_candidates = []
     learned_rules = []
     for evaluation in evaluations:
-        if evaluation.result.total_net_pnl <= 0 or not _is_eth(evaluation.result):
+        if not _filter_learning_eligible(evaluation):
             continue
         best_rule = None
         for timeframe in candidate_timeframes:
@@ -171,6 +215,7 @@ def _learn_htf_filter_candidates(evaluations, derived_features, htf_analysis):
                 continue
             rule = {
                 "base_candidate_id": evaluation.candidate.candidate_id,
+                "learning_scope": _filter_learning_scope(evaluation),
                 "timeframe": timeframe,
                 "metric": "range_pct",
                 "operator": ">=",
@@ -228,6 +273,659 @@ def _learn_htf_filter_candidates(evaluations, derived_features, htf_analysis):
             }
         )
     return learned_candidates, learned_rules
+
+
+def _orderflow_feature_series_cache(
+    candles,
+    candidates,
+    warmup_candles=None,
+    include_base_lookbacks=False,
+):
+    """Build only the per-lookback kline features required by filter candidates."""
+    lookbacks = sorted(
+        {
+            (
+                candidate.orderflow_filter_lookback
+                if candidate.orderflow_filter_lookback is not None
+                else candidate.lookback_candles
+            )
+            for candidate in candidates
+            if candidate.orderflow_filter_lookback is not None
+            or include_base_lookbacks
+        }
+    )
+    if not lookbacks:
+        return {}
+    warmup = list(warmup_candles or [])
+    combined = warmup + list(candles)
+    offset = len(warmup)
+    result = {}
+    for lookback in lookbacks:
+        series = build_closed_kline_orderflow_feature_series(combined, lookback)
+        result[lookback] = KlineOrderflowFeatureSeries(
+            lookback_candles=lookback,
+            quote_volume_ratio=array("d", series.quote_volume_ratio[offset:]),
+            trade_count_ratio=array("d", series.trade_count_ratio[offset:]),
+            taker_buy_quote_imbalance=array(
+                "d",
+                series.taker_buy_quote_imbalance[offset:],
+            ),
+        )
+    return result
+
+
+def _orderflow_values_for_candidate(
+    evaluation,
+    open_times,
+    feature_series,
+    metric,
+):
+    """Return winner/loser values available at an existing trade's entry."""
+    series = feature_series.get(evaluation.candidate.lookback_candles)
+    if series is None:
+        return [], []
+    winners = []
+    losers = []
+    for trade in evaluation.result.trades:
+        index = bisect_left(open_times, trade.entry_time)
+        if index >= len(open_times) or open_times[index] != trade.entry_time:
+            continue
+        value = series.value_at(metric, index)
+        if value is None:
+            continue
+        if trade.net_pnl > 0:
+            winners.append(value)
+        elif trade.net_pnl < 0:
+            losers.append(value)
+    return winners, losers
+
+
+def _learn_orderflow_filter_candidates(evaluations, candles):
+    """Learn one frozen order-flow entry filter for each eligible ETH setup.
+
+    This is deliberately limited to existing ETH candidates that are either net
+    positive or have a gross edge that may be rescued from fees/noise.  It does
+    not create a new entry family, retune exits, or relax any admission gate.  A
+    candidate is only added when its own training winners and losers show a
+    repeatable directional separation in a completed-minute feature.
+    """
+    eligible = [
+        evaluation
+        for evaluation in evaluations
+        if _filter_learning_eligible(evaluation)
+    ]
+    feature_series = _orderflow_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in eligible],
+        include_base_lookbacks=True,
+    )
+    open_times = [candle.open_time for candle in candles]
+    learned_candidates = []
+    learned_rules = []
+    for evaluation in eligible:
+        best_rule = None
+        for metric in ORDERFLOW_METRICS:
+            winners, losers = _orderflow_values_for_candidate(
+                evaluation,
+                open_times,
+                feature_series,
+                metric,
+            )
+            if len(winners) < 20 or len(losers) < 20:
+                continue
+            winner_average = _average(winners)
+            loser_average = _average(losers)
+            if (
+                winner_average is None
+                or loser_average is None
+                or winner_average == loser_average
+            ):
+                continue
+            operator = ">=" if winner_average > loser_average else "<="
+            threshold = (winner_average + loser_average) / 2.0
+            winner_pass_rate = sum(
+                value >= threshold if operator == ">=" else value <= threshold
+                for value in winners
+            ) / len(winners)
+            loser_pass_rate = sum(
+                value >= threshold if operator == ">=" else value <= threshold
+                for value in losers
+            ) / len(losers)
+            separation = winner_pass_rate - loser_pass_rate
+            if winner_pass_rate < 0.35 or separation < 0.05:
+                continue
+            rule = {
+                "base_candidate_id": evaluation.candidate.candidate_id,
+                "learning_scope": _filter_learning_scope(evaluation),
+                "lookback_candles": evaluation.candidate.lookback_candles,
+                "metric": metric,
+                "operator": operator,
+                "threshold": threshold,
+                "training_winner_sample_count": len(winners),
+                "training_loser_sample_count": len(losers),
+                "training_winner_average": winner_average,
+                "training_loser_average": loser_average,
+                "training_winner_pass_rate": winner_pass_rate,
+                "training_loser_pass_rate": loser_pass_rate,
+                "training_pass_rate_separation": separation,
+            }
+            if best_rule is None or (
+                rule["training_pass_rate_separation"],
+                rule["training_winner_sample_count"]
+                + rule["training_loser_sample_count"],
+            ) > (
+                best_rule["training_pass_rate_separation"],
+                best_rule["training_winner_sample_count"]
+                + best_rule["training_loser_sample_count"],
+            ):
+                best_rule = rule
+        if best_rule is None:
+            continue
+        candidate = replace(
+            evaluation.candidate,
+            candidate_id=(
+                f"{evaluation.candidate.candidate_id}"
+                f"_orderflow_{best_rule['metric']}_filter"
+            ),
+            search_pass=f"{evaluation.candidate.search_pass}_orderflow_filter",
+            orderflow_filter_lookback=int(best_rule["lookback_candles"]),
+            orderflow_filter_metric=str(best_rule["metric"]),
+            orderflow_filter_operator=str(best_rule["operator"]),
+            orderflow_filter_threshold=float(best_rule["threshold"]),
+            orderflow_filter_training_winner_average=float(
+                best_rule["training_winner_average"]
+            ),
+            orderflow_filter_training_loser_average=float(
+                best_rule["training_loser_average"]
+            ),
+            orderflow_filter_training_winner_pass_rate=float(
+                best_rule["training_winner_pass_rate"]
+            ),
+            orderflow_filter_training_loser_pass_rate=float(
+                best_rule["training_loser_pass_rate"]
+            ),
+        )
+        learned_candidates.append(candidate)
+        learned_rules.append(
+            {
+                **best_rule,
+                "candidate_id": candidate.candidate_id,
+                "learned_from": "training_only",
+                "frozen_before_blindtest": True,
+                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+            }
+        )
+    return learned_candidates, learned_rules
+
+
+def _evaluate_orderflow_filter_candidates(
+    candidates,
+    candles,
+    start_capital_reference,
+    filters,
+    progress_callback=None,
+):
+    if not candidates:
+        return []
+    market = _r._MarketMetrics(candles)
+    feature_series = _orderflow_feature_series_cache(candles, candidates)
+    evaluations = []
+    total = len(candidates)
+    for done, candidate in enumerate(candidates, start=1):
+        result = _r._run_candidate_on_candles(
+            candles,
+            candidate,
+            start_capital_reference,
+            filters,
+            market,
+            orderflow_feature_series=feature_series,
+        )
+        rejection = _candidate_rejection(result)
+        evaluations.append(
+            _r._TrainingEvaluation(
+                candidate,
+                result,
+                _r._activity_class(result.trades_per_day),
+                rejection is None,
+                rejection,
+                _score(result),
+                abs(_r.TARGET_QUOTE_PER_DAY - result.quote_per_day),
+            )
+        )
+        _r._emit_router_progress(progress_callback, done, total)
+    return evaluations
+
+
+def _aggtrade_feature_series_cache(
+    candles,
+    candidates,
+    warmup_candles=None,
+    include_base_lookbacks=False,
+):
+    lookbacks = sorted(
+        {
+            (
+                candidate.aggtrade_filter_lookback
+                if candidate.aggtrade_filter_lookback is not None
+                else candidate.lookback_candles
+            )
+            for candidate in candidates
+            if candidate.aggtrade_filter_lookback is not None
+            or include_base_lookbacks
+        }
+    )
+    if not lookbacks:
+        return {}
+    warmup = list(warmup_candles or [])
+    combined = warmup + list(candles)
+    offset = len(warmup)
+    result = {}
+    for lookback in lookbacks:
+        series = build_closed_agg_trade_feature_series(combined, lookback)
+        result[lookback] = AggTradeFeatureSeries(
+            lookback_candles=lookback,
+            agg_trade_count_ratio=array("d", series.agg_trade_count_ratio[offset:]),
+            raw_trade_count_ratio=array("d", series.raw_trade_count_ratio[offset:]),
+            taker_buy_quote_imbalance=array(
+                "d",
+                series.taker_buy_quote_imbalance[offset:],
+            ),
+            vwap_close_deviation=array("d", series.vwap_close_deviation[offset:]),
+            max_agg_trade_quote_share=array(
+                "d",
+                series.max_agg_trade_quote_share[offset:],
+            ),
+        )
+    return result
+
+
+def _aggtrade_values_for_candidate(evaluation, open_times, feature_series, metric):
+    series = feature_series.get(evaluation.candidate.lookback_candles)
+    if series is None:
+        return [], []
+    winners = []
+    losers = []
+    for trade in evaluation.result.trades:
+        index = bisect_left(open_times, trade.entry_time)
+        if index >= len(open_times) or open_times[index] != trade.entry_time:
+            continue
+        value = series.value_at(metric, index)
+        if value is None:
+            continue
+        if trade.net_pnl > 0:
+            winners.append(value)
+        elif trade.net_pnl < 0:
+            losers.append(value)
+    return winners, losers
+
+
+def _learn_aggtrade_filter_candidates(evaluations, candles):
+    """Add one frozen aggTrade filter for each eligible ETH training setup."""
+    eligible = [
+        evaluation
+        for evaluation in evaluations
+        if _filter_learning_eligible(evaluation)
+    ]
+    feature_series = _aggtrade_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in eligible],
+        include_base_lookbacks=True,
+    )
+    open_times = [candle.open_time for candle in candles]
+    learned_candidates = []
+    learned_rules = []
+    for evaluation in eligible:
+        best_rule = None
+        for metric in AGG_TRADE_METRICS:
+            winners, losers = _aggtrade_values_for_candidate(
+                evaluation,
+                open_times,
+                feature_series,
+                metric,
+            )
+            if len(winners) < 20 or len(losers) < 20:
+                continue
+            winner_average = _average(winners)
+            loser_average = _average(losers)
+            if (
+                winner_average is None
+                or loser_average is None
+                or winner_average == loser_average
+            ):
+                continue
+            operator = ">=" if winner_average > loser_average else "<="
+            threshold = (winner_average + loser_average) / 2.0
+            winner_pass_rate = sum(
+                value >= threshold if operator == ">=" else value <= threshold
+                for value in winners
+            ) / len(winners)
+            loser_pass_rate = sum(
+                value >= threshold if operator == ">=" else value <= threshold
+                for value in losers
+            ) / len(losers)
+            separation = winner_pass_rate - loser_pass_rate
+            if winner_pass_rate < 0.35 or separation < 0.05:
+                continue
+            rule = {
+                "base_candidate_id": evaluation.candidate.candidate_id,
+                "learning_scope": _filter_learning_scope(evaluation),
+                "lookback_candles": evaluation.candidate.lookback_candles,
+                "metric": metric,
+                "operator": operator,
+                "threshold": threshold,
+                "training_winner_sample_count": len(winners),
+                "training_loser_sample_count": len(losers),
+                "training_winner_average": winner_average,
+                "training_loser_average": loser_average,
+                "training_winner_pass_rate": winner_pass_rate,
+                "training_loser_pass_rate": loser_pass_rate,
+                "training_pass_rate_separation": separation,
+            }
+            if best_rule is None or (
+                rule["training_pass_rate_separation"],
+                rule["training_winner_sample_count"]
+                + rule["training_loser_sample_count"],
+            ) > (
+                best_rule["training_pass_rate_separation"],
+                best_rule["training_winner_sample_count"]
+                + best_rule["training_loser_sample_count"],
+            ):
+                best_rule = rule
+        if best_rule is None:
+            continue
+        candidate = replace(
+            evaluation.candidate,
+            candidate_id=(
+                f"{evaluation.candidate.candidate_id}"
+                f"_aggtrade_{best_rule['metric']}_filter"
+            ),
+            search_pass=f"{evaluation.candidate.search_pass}_aggtrade_filter",
+            aggtrade_filter_lookback=int(best_rule["lookback_candles"]),
+            aggtrade_filter_metric=str(best_rule["metric"]),
+            aggtrade_filter_operator=str(best_rule["operator"]),
+            aggtrade_filter_threshold=float(best_rule["threshold"]),
+            aggtrade_filter_training_winner_average=float(
+                best_rule["training_winner_average"]
+            ),
+            aggtrade_filter_training_loser_average=float(
+                best_rule["training_loser_average"]
+            ),
+            aggtrade_filter_training_winner_pass_rate=float(
+                best_rule["training_winner_pass_rate"]
+            ),
+            aggtrade_filter_training_loser_pass_rate=float(
+                best_rule["training_loser_pass_rate"]
+            ),
+        )
+        learned_candidates.append(candidate)
+        learned_rules.append(
+            {
+                **best_rule,
+                "candidate_id": candidate.candidate_id,
+                "learned_from": "training_only",
+                "frozen_before_blindtest": True,
+                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+            }
+        )
+    return learned_candidates, learned_rules
+
+
+def _evaluate_aggtrade_filter_candidates(
+    candidates,
+    candles,
+    start_capital_reference,
+    filters,
+    progress_callback=None,
+):
+    if not candidates:
+        return []
+    market = _r._MarketMetrics(candles)
+    feature_series = _aggtrade_feature_series_cache(candles, candidates)
+    evaluations = []
+    for done, candidate in enumerate(candidates, start=1):
+        result = _r._run_candidate_on_candles(
+            candles,
+            candidate,
+            start_capital_reference,
+            filters,
+            market,
+            aggtrade_feature_series=feature_series,
+        )
+        rejection = _candidate_rejection(result)
+        evaluations.append(
+            _r._TrainingEvaluation(
+                candidate,
+                result,
+                _r._activity_class(result.trades_per_day),
+                rejection is None,
+                rejection,
+                _score(result),
+                abs(_r.TARGET_QUOTE_PER_DAY - result.quote_per_day),
+            )
+        )
+        _r._emit_router_progress(progress_callback, done, len(candidates))
+    return evaluations
+
+
+def _context_market_feature_series_cache(
+    candles,
+    candidates,
+    warmup_candles=None,
+    feature_store: ContextMarketFeatureStore | None = None,
+    include_base_lookbacks=False,
+):
+    """Build only the frozen cross-market lookbacks required by candidates."""
+    lookbacks = sorted(
+        {
+            (
+                candidate.context_filter_lookback
+                if candidate.context_filter_lookback is not None
+                else candidate.lookback_candles
+            )
+            for candidate in candidates
+            if candidate.context_filter_lookback is not None
+            or include_base_lookbacks
+        }
+    )
+    if not lookbacks:
+        return {}
+    warmup = list(warmup_candles or [])
+    combined = warmup + list(candles)
+    store = feature_store or build_closed_context_market_feature_store(combined)
+    offset = len(warmup)
+    result = {}
+    for lookback in lookbacks:
+        series = store.series_for_lookback(lookback)
+        result[lookback] = ContextMarketFeatureSeries(
+            lookback_candles=lookback,
+            btcusdc_return=array("d", series.btcusdc_return[offset:]),
+            ethbtc_return=array("d", series.ethbtc_return[offset:]),
+            ethusdt_ethusdc_basis=array(
+                "d",
+                series.ethusdt_ethusdc_basis[offset:],
+            ),
+            usdcusdt_deviation=array("d", series.usdcusdt_deviation[offset:]),
+        )
+    return result
+
+
+def _context_market_values_for_candidate(
+    evaluation,
+    open_times,
+    feature_series,
+    metric,
+):
+    series = feature_series.get(evaluation.candidate.lookback_candles)
+    if series is None:
+        return [], []
+    winners = []
+    losers = []
+    for trade in evaluation.result.trades:
+        index = bisect_left(open_times, trade.entry_time)
+        if index >= len(open_times) or open_times[index] != trade.entry_time:
+            continue
+        value = series.value_at(metric, index)
+        if value is None:
+            continue
+        if trade.net_pnl > 0:
+            winners.append(value)
+        elif trade.net_pnl < 0:
+            losers.append(value)
+    return winners, losers
+
+
+def _learn_context_market_filter_candidates(evaluations, candles, feature_store):
+    """Learn one frozen context-market entry filter per eligible ETH setup."""
+    eligible = [
+        evaluation
+        for evaluation in evaluations
+        if _filter_learning_eligible(evaluation)
+    ]
+    feature_series = _context_market_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in eligible],
+        feature_store=feature_store,
+        include_base_lookbacks=True,
+    )
+    open_times = [candle.open_time for candle in candles]
+    learned_candidates = []
+    learned_rules = []
+    for evaluation in eligible:
+        best_rule = None
+        for metric in CONTEXT_MARKET_METRICS:
+            winners, losers = _context_market_values_for_candidate(
+                evaluation,
+                open_times,
+                feature_series,
+                metric,
+            )
+            if len(winners) < 20 or len(losers) < 20:
+                continue
+            winner_average = _average(winners)
+            loser_average = _average(losers)
+            if (
+                winner_average is None
+                or loser_average is None
+                or winner_average == loser_average
+            ):
+                continue
+            operator = ">=" if winner_average > loser_average else "<="
+            threshold = (winner_average + loser_average) / 2.0
+            winner_pass_rate = sum(
+                value >= threshold if operator == ">=" else value <= threshold
+                for value in winners
+            ) / len(winners)
+            loser_pass_rate = sum(
+                value >= threshold if operator == ">=" else value <= threshold
+                for value in losers
+            ) / len(losers)
+            separation = winner_pass_rate - loser_pass_rate
+            if winner_pass_rate < 0.35 or separation < 0.05:
+                continue
+            rule = {
+                "base_candidate_id": evaluation.candidate.candidate_id,
+                "learning_scope": _filter_learning_scope(evaluation),
+                "lookback_candles": evaluation.candidate.lookback_candles,
+                "metric": metric,
+                "operator": operator,
+                "threshold": threshold,
+                "training_winner_sample_count": len(winners),
+                "training_loser_sample_count": len(losers),
+                "training_winner_average": winner_average,
+                "training_loser_average": loser_average,
+                "training_winner_pass_rate": winner_pass_rate,
+                "training_loser_pass_rate": loser_pass_rate,
+                "training_pass_rate_separation": separation,
+            }
+            if best_rule is None or (
+                rule["training_pass_rate_separation"],
+                rule["training_winner_sample_count"]
+                + rule["training_loser_sample_count"],
+            ) > (
+                best_rule["training_pass_rate_separation"],
+                best_rule["training_winner_sample_count"]
+                + best_rule["training_loser_sample_count"],
+            ):
+                best_rule = rule
+        if best_rule is None:
+            continue
+        candidate = replace(
+            evaluation.candidate,
+            candidate_id=(
+                f"{evaluation.candidate.candidate_id}"
+                f"_context_{best_rule['metric']}_filter"
+            ),
+            search_pass=f"{evaluation.candidate.search_pass}_context_market_filter",
+            context_filter_lookback=int(best_rule["lookback_candles"]),
+            context_filter_metric=str(best_rule["metric"]),
+            context_filter_operator=str(best_rule["operator"]),
+            context_filter_threshold=float(best_rule["threshold"]),
+            context_filter_training_winner_average=float(
+                best_rule["training_winner_average"]
+            ),
+            context_filter_training_loser_average=float(
+                best_rule["training_loser_average"]
+            ),
+            context_filter_training_winner_pass_rate=float(
+                best_rule["training_winner_pass_rate"]
+            ),
+            context_filter_training_loser_pass_rate=float(
+                best_rule["training_loser_pass_rate"]
+            ),
+        )
+        learned_candidates.append(candidate)
+        learned_rules.append(
+            {
+                **best_rule,
+                "candidate_id": candidate.candidate_id,
+                "learned_from": "training_only",
+                "frozen_before_blindtest": True,
+                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+            }
+        )
+    return learned_candidates, learned_rules
+
+
+def _evaluate_context_market_filter_candidates(
+    candidates,
+    candles,
+    start_capital_reference,
+    filters,
+    feature_store,
+    progress_callback=None,
+):
+    if not candidates:
+        return []
+    market = _r._MarketMetrics(candles)
+    feature_series = _context_market_feature_series_cache(
+        candles,
+        candidates,
+        feature_store=feature_store,
+    )
+    evaluations = []
+    for done, candidate in enumerate(candidates, start=1):
+        result = _r._run_candidate_on_candles(
+            candles,
+            candidate,
+            start_capital_reference,
+            filters,
+            market,
+            context_feature_series=feature_series,
+        )
+        rejection = _candidate_rejection(result)
+        evaluations.append(
+            _r._TrainingEvaluation(
+                candidate,
+                result,
+                _r._activity_class(result.trades_per_day),
+                rejection is None,
+                rejection,
+                _score(result),
+                abs(_r.TARGET_QUOTE_PER_DAY - result.quote_per_day),
+            )
+        )
+        _r._emit_router_progress(progress_callback, done, len(candidates))
+    return evaluations
 
 
 def _feature_series_cache(candles, candidates, warmup_candles=None):
@@ -294,10 +992,37 @@ def _evaluate_htf_filter_candidates(
 
 
 def _select_candidate_pool(evaluations):
+    pool, _diagnostics = _select_candidate_pool_with_diagnostics(evaluations)
+    return pool
+
+
+def _base_candidate_key(candidate):
+    candidate_id = candidate.candidate_id
+    for marker in (
+        "_htf_",
+        "_orderflow_",
+        "_aggtrade_",
+        "_context_",
+    ):
+        if marker in candidate_id:
+            candidate_id = candidate_id.split(marker, 1)[0]
+            break
+    return (candidate.family, candidate_id)
+
+
+def _select_candidate_pool_with_diagnostics(evaluations):
     allowed = [evaluation for evaluation in evaluations if evaluation.trade_allowed]
     if not allowed:
-        return []
-    max_count = max(2, min(25, _ceil(_run_days(evaluations) / 14.0)))
+        return [], {
+            "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+            "max_count": 0,
+            "family_cap": 0,
+            "allowed_input_count": 0,
+            "selected_count": 0,
+            "pool_rejected_by_family_cap": 0,
+            "pool_rejected_by_base_candidate_duplication": 0,
+        }
+    max_count = max(1, min(8, _ceil(_run_days(evaluations) / 28.0)))
     ordered = sorted(
         allowed,
         key=lambda evaluation: (
@@ -307,18 +1032,296 @@ def _select_candidate_pool(evaluations):
         ),
         reverse=True,
     )
-    family_cap = max(2, _ceil(max_count / 5.0))
+    family_cap = 2
     pool = []
     family_counts = {}
+    base_keys = set()
+    rejected_by_family_cap = 0
+    rejected_by_base_candidate_duplication = 0
     for evaluation in ordered:
         family = evaluation.candidate.family
         if family_counts.get(family, 0) >= family_cap:
+            rejected_by_family_cap += 1
+            continue
+        base_key = _base_candidate_key(evaluation.candidate)
+        if base_key in base_keys:
+            rejected_by_base_candidate_duplication += 1
             continue
         pool.append(evaluation)
         family_counts[family] = family_counts.get(family, 0) + 1
+        base_keys.add(base_key)
         if len(pool) >= max_count:
             break
-    return pool
+    return pool, {
+        "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+        "max_count": max_count,
+        "family_cap": family_cap,
+        "allowed_input_count": len(allowed),
+        "selected_count": len(pool),
+        "pool_rejected_by_family_cap": rejected_by_family_cap,
+        "pool_rejected_by_base_candidate_duplication": (
+            rejected_by_base_candidate_duplication
+        ),
+    }
+
+
+def _split_selection_train_validation(training_candles):
+    """Split the official training window into learn and validation windows."""
+    candles = list(training_candles)
+    if len(candles) < 4:
+        return candles, []
+    validation_count = min(len(candles) // 4, 180 * 1440)
+    validation_count = max(1, validation_count)
+    train_count = len(candles) - validation_count
+    if train_count <= 0:
+        return candles, []
+    return candles[:train_count], candles[train_count:]
+
+
+def _compact_evaluation_metrics(evaluation):
+    result = evaluation.result
+    return {
+        "trade_allowed": evaluation.trade_allowed,
+        "rejection_reason": evaluation.rejection_reason,
+        "quote_per_day": result.quote_per_day,
+        "total_net_pnl": result.total_net_pnl,
+        "total_gross_pnl": result.total_gross_pnl,
+        "fees": result.total_fees,
+        "trade_count": result.trade_count,
+        "trades_per_day": result.trades_per_day,
+        "winning_trades": result.winning_trades,
+        "losing_trades": result.losing_trades,
+        "active_days": _active_days(result.trades),
+        "profit_factor": _r._profit_factor(result.trades),
+        "fee_to_gross_ratio": _r._fee_to_gross_ratio(result),
+        "max_drawdown": result.max_drawdown,
+        "balanced_score": evaluation.balanced_score,
+    }
+
+
+def _evaluate_candidates_with_feature_caches(
+    candidates,
+    candles,
+    start_capital_reference,
+    filters,
+    htf_warmup_candles=None,
+    orderflow_warmup_candles=None,
+    aggtrade_warmup_candles=None,
+    context_warmup_candles=None,
+    progress_callback=None,
+):
+    if not candidates:
+        return []
+    market = _r._MarketMetrics(candles)
+    htf_feature_series = _feature_series_cache(
+        candles,
+        candidates,
+        warmup_candles=htf_warmup_candles,
+    )
+    orderflow_feature_series = _orderflow_feature_series_cache(
+        candles,
+        candidates,
+        warmup_candles=orderflow_warmup_candles,
+    )
+    aggtrade_feature_series = _aggtrade_feature_series_cache(
+        candles,
+        candidates,
+        warmup_candles=aggtrade_warmup_candles,
+    )
+    context_feature_series = _context_market_feature_series_cache(
+        candles,
+        candidates,
+        warmup_candles=context_warmup_candles,
+    )
+    evaluations = []
+    total = len(candidates)
+    ordered = sorted(
+        candidates,
+        key=lambda candidate: (
+            candidate.lookback_candles,
+            candidate.search_pass,
+            candidate.family,
+            candidate.candidate_id,
+        ),
+    )
+    for done, candidate in enumerate(ordered, start=1):
+        result = _r._run_candidate_on_candles(
+            candles,
+            candidate,
+            start_capital_reference,
+            filters,
+            market,
+            htf_feature_series,
+            orderflow_feature_series,
+            aggtrade_feature_series,
+            context_feature_series,
+        )
+        rejection = _candidate_rejection(result)
+        evaluations.append(
+            _r._TrainingEvaluation(
+                candidate,
+                result,
+                _r._activity_class(result.trades_per_day),
+                rejection is None,
+                rejection,
+                _score(result),
+                abs(_r.TARGET_QUOTE_PER_DAY - result.quote_per_day),
+            )
+        )
+        _r._emit_router_progress(progress_callback, done, total)
+    return evaluations
+
+
+def _pool_validation_rejection(result):
+    days = max(1.0, _result_days(result))
+    min_trades = max(2, min(20, _ceil(days * 0.20)))
+    min_active_days = max(1, min(10, _ceil(days * 0.10)))
+    if result.trade_count < min_trades or _active_days(result.trades) < min_active_days:
+        return "rejected_by_activity"
+    if result.total_net_pnl <= 0:
+        if result.total_gross_pnl > 0 and result.total_fees >= result.total_gross_pnl:
+            return "rejected_by_fees"
+        return "rejected_by_validation_net"
+    ratio = _r._fee_to_gross_ratio(result)
+    if ratio is not None and ratio > _r.MAX_FEE_TO_GROSS_RATIO:
+        return "rejected_by_fees"
+    profit_factor = _r._profit_factor(result.trades)
+    if profit_factor is not None and profit_factor < _r.MIN_PROFIT_FACTOR:
+        return "rejected_by_profit_factor"
+    if result.max_drawdown > _r.MAX_DRAWDOWN_PCT:
+        return "rejected_by_drawdown"
+    return None
+
+
+def _optimize_validation_pool(
+    validation_evaluations,
+    candles,
+    start_capital,
+    filters,
+    htf_warmup_candles=None,
+    orderflow_warmup_candles=None,
+    aggtrade_warmup_candles=None,
+    context_warmup_candles=None,
+):
+    """Build a validation-safe shared-account pool without using blindtest data."""
+    allowed = [evaluation for evaluation in validation_evaluations if evaluation.trade_allowed]
+    if not allowed:
+        empty = _r._empty_simulation_result(
+            _r._diagnostic_placeholder_candidate(start_capital),
+            start_capital,
+        )
+        return [], empty, {
+            "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+            "candidate_library_count": 0,
+            "max_count": 0,
+            "family_cap": 0,
+            "selected_count": 0,
+            "rejection_counts": {"no_validation_allowed_candidates": 1},
+            "selected_candidate_ids": [],
+            "accepted_steps": [],
+        }
+    max_count = max(1, min(8, _ceil(_run_days(validation_evaluations) / 28.0)))
+    family_cap = 1
+    min_incremental_quote_per_day = 0.03
+    ordered = sorted(
+        allowed,
+        key=lambda evaluation: (
+            evaluation.result.quote_per_day,
+            evaluation.balanced_score,
+            -evaluation.result.max_drawdown,
+            evaluation.result.trades_per_day,
+        ),
+        reverse=True,
+    )
+    pool = []
+    family_counts = {}
+    base_keys = set()
+    current_result = _r._empty_simulation_result(
+        _r._diagnostic_placeholder_candidate(start_capital),
+        start_capital,
+    )
+    rejection_counts = {
+        "rejected_by_family_cap": 0,
+        "rejected_by_base_candidate_duplication": 0,
+        "rejected_by_pool_validation": 0,
+        "rejected_by_pool_no_incremental_edge": 0,
+        "rejected_by_pool_small_incremental_edge": 0,
+    }
+    accepted_steps = []
+    rejected_pool_reasons = {}
+    for evaluation in ordered:
+        if len(pool) >= max_count:
+            break
+        family = evaluation.candidate.family
+        if family_counts.get(family, 0) >= family_cap:
+            rejection_counts["rejected_by_family_cap"] += 1
+            continue
+        base_key = _base_candidate_key(evaluation.candidate)
+        if base_key in base_keys:
+            rejection_counts["rejected_by_base_candidate_duplication"] += 1
+            continue
+        trial_pool = pool + [evaluation]
+        trial_result = _aggregate_pool_result(
+            candles,
+            trial_pool,
+            start_capital,
+            filters,
+            htf_warmup_candles=htf_warmup_candles,
+            orderflow_warmup_candles=orderflow_warmup_candles,
+            aggtrade_warmup_candles=aggtrade_warmup_candles,
+            context_warmup_candles=context_warmup_candles,
+        )
+        rejection = _pool_validation_rejection(trial_result)
+        if rejection is not None:
+            rejection_counts["rejected_by_pool_validation"] += 1
+            rejected_pool_reasons[rejection] = rejected_pool_reasons.get(rejection, 0) + 1
+            continue
+        incremental_quote_per_day = (
+            trial_result.quote_per_day - current_result.quote_per_day
+        )
+        if pool and trial_result.total_net_pnl <= current_result.total_net_pnl + 0.000001:
+            rejection_counts["rejected_by_pool_no_incremental_edge"] += 1
+            continue
+        if pool and incremental_quote_per_day < min_incremental_quote_per_day:
+            rejection_counts["rejected_by_pool_small_incremental_edge"] += 1
+            continue
+        pool = trial_pool
+        current_result = trial_result
+        family_counts[family] = family_counts.get(family, 0) + 1
+        base_keys.add(base_key)
+        accepted_steps.append(
+            {
+                "candidate_id": evaluation.candidate.candidate_id,
+                "family": family,
+                "pool_size_after_add": len(pool),
+                "incremental_validation_quote_per_day": incremental_quote_per_day,
+                "validation_pool_quote_per_day": current_result.quote_per_day,
+                "validation_pool_total_net_pnl": current_result.total_net_pnl,
+                "validation_pool_trade_count": current_result.trade_count,
+                "validation_pool_max_drawdown": current_result.max_drawdown,
+                "validation_pool_profit_factor": _r._profit_factor(
+                    current_result.trades
+                ),
+                "validation_pool_fee_to_gross_ratio": _r._fee_to_gross_ratio(
+                    current_result
+                ),
+            }
+        )
+    diagnostics = {
+        "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+        "candidate_library_count": len(allowed),
+        "max_count": max_count,
+        "family_cap": family_cap,
+        "min_incremental_quote_per_day": min_incremental_quote_per_day,
+        "selected_count": len(pool),
+        "rejection_counts": rejection_counts,
+        "pool_validation_rejection_reasons": rejected_pool_reasons,
+        "selected_candidate_ids": [
+            evaluation.candidate.candidate_id for evaluation in pool
+        ],
+        "accepted_steps": accepted_steps,
+    }
+    return pool, current_result, diagnostics
 
 
 def _average(values):
@@ -347,6 +1350,201 @@ def _metric_split(rows, metric_name):
         "winner_average": winner_average,
         "loser_average": loser_average,
         "winner_minus_loser": difference,
+    }
+
+
+def _orderflow_training_edge_analysis(evaluations, candles, learned_rules):
+    """Report ETH candidates eligible for training-only order-flow filters."""
+    eligible = [
+        evaluation
+        for evaluation in evaluations
+        if _filter_learning_eligible(evaluation)
+    ]
+    feature_series = _orderflow_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in eligible],
+        include_base_lookbacks=True,
+    )
+    open_times = [candle.open_time for candle in candles]
+    learned_metrics = {rule["metric"] for rule in learned_rules}
+    metrics = {}
+    for metric in ORDERFLOW_METRICS:
+        winner_values = []
+        loser_values = []
+        for evaluation in eligible:
+            winners, losers = _orderflow_values_for_candidate(
+                evaluation,
+                open_times,
+                feature_series,
+                metric,
+            )
+            winner_values.extend(winners)
+            loser_values.extend(losers)
+        winner_average = _average(winner_values)
+        loser_average = _average(loser_values)
+        metrics[metric] = {
+            "winner_sample_count": len(winner_values),
+            "loser_sample_count": len(loser_values),
+            "winner_average": winner_average,
+            "loser_average": loser_average,
+            "winner_minus_loser": (
+                winner_average - loser_average
+                if winner_average is not None and loser_average is not None
+                else None
+            ),
+            "candidate_for_future_score_or_gate": metric in learned_metrics,
+        }
+    return {
+        "scope": "net_positive_or_gross_edge_eth_training_candidate_entries",
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if learned_rules
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "changes_trade_gates_or_scores": False,
+        "eligible_positive_eth_candidate_count": len(eligible),
+        "eligible_filter_learning_candidate_count": len(eligible),
+        "eligible_gross_edge_fee_rescue_candidate_count": sum(
+            1
+            for evaluation in eligible
+            if _filter_learning_scope(evaluation)
+            == "gross_edge_fee_rescue_eth_candidate"
+        ),
+        "learned_rule_count": len(learned_rules),
+        "metrics": metrics,
+    }
+
+
+def _aggtrade_training_edge_analysis(evaluations, candles, learned_rules):
+    eligible = [
+        evaluation
+        for evaluation in evaluations
+        if _filter_learning_eligible(evaluation)
+    ]
+    feature_series = _aggtrade_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in eligible],
+        include_base_lookbacks=True,
+    )
+    open_times = [candle.open_time for candle in candles]
+    learned_metrics = {rule["metric"] for rule in learned_rules}
+    metrics = {}
+    for metric in AGG_TRADE_METRICS:
+        winners_all = []
+        losers_all = []
+        for evaluation in eligible:
+            winners, losers = _aggtrade_values_for_candidate(
+                evaluation,
+                open_times,
+                feature_series,
+                metric,
+            )
+            winners_all.extend(winners)
+            losers_all.extend(losers)
+        winner_average = _average(winners_all)
+        loser_average = _average(losers_all)
+        metrics[metric] = {
+            "winner_sample_count": len(winners_all),
+            "loser_sample_count": len(losers_all),
+            "winner_average": winner_average,
+            "loser_average": loser_average,
+            "winner_minus_loser": (
+                winner_average - loser_average
+                if winner_average is not None and loser_average is not None
+                else None
+            ),
+            "candidate_for_future_score_or_gate": metric in learned_metrics,
+        }
+    return {
+        "scope": "net_positive_or_gross_edge_eth_training_candidate_entries",
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if learned_rules
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "changes_trade_gates_or_scores": False,
+        "eligible_positive_eth_candidate_count": len(eligible),
+        "eligible_filter_learning_candidate_count": len(eligible),
+        "eligible_gross_edge_fee_rescue_candidate_count": sum(
+            1
+            for evaluation in eligible
+            if _filter_learning_scope(evaluation)
+            == "gross_edge_fee_rescue_eth_candidate"
+        ),
+        "learned_rule_count": len(learned_rules),
+        "metrics": metrics,
+    }
+
+
+def _context_market_training_edge_analysis(
+    evaluations,
+    candles,
+    feature_store,
+    learned_rules,
+):
+    eligible = [
+        evaluation
+        for evaluation in evaluations
+        if _filter_learning_eligible(evaluation)
+    ]
+    feature_series = _context_market_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in eligible],
+        feature_store=feature_store,
+        include_base_lookbacks=True,
+    )
+    open_times = [candle.open_time for candle in candles]
+    learned_metrics = {rule["metric"] for rule in learned_rules}
+    metrics = {}
+    for metric in CONTEXT_MARKET_METRICS:
+        winners_all = []
+        losers_all = []
+        for evaluation in eligible:
+            winners, losers = _context_market_values_for_candidate(
+                evaluation,
+                open_times,
+                feature_series,
+                metric,
+            )
+            winners_all.extend(winners)
+            losers_all.extend(losers)
+        winner_average = _average(winners_all)
+        loser_average = _average(losers_all)
+        metrics[metric] = {
+            "source": metric.split("_", 1)[0].upper(),
+            "winner_sample_count": len(winners_all),
+            "loser_sample_count": len(losers_all),
+            "winner_average": winner_average,
+            "loser_average": loser_average,
+            "winner_minus_loser": (
+                winner_average - loser_average
+                if winner_average is not None and loser_average is not None
+                else None
+            ),
+            "candidate_for_future_score_or_gate": metric in learned_metrics,
+        }
+    return {
+        "scope": "net_positive_or_gross_edge_eth_training_candidate_entries",
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if learned_rules
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "changes_trade_gates_or_scores": False,
+        "eligible_positive_eth_candidate_count": len(eligible),
+        "eligible_filter_learning_candidate_count": len(eligible),
+        "eligible_gross_edge_fee_rescue_candidate_count": sum(
+            1
+            for evaluation in eligible
+            if _filter_learning_scope(evaluation)
+            == "gross_edge_fee_rescue_eth_candidate"
+        ),
+        "learned_rule_count": len(learned_rules),
+        "source_coverage": {
+            symbol: round(coverage, 6)
+            for symbol, coverage in feature_store.source_coverage.items()
+        },
+        "metrics": metrics,
     }
 
 
@@ -450,6 +1648,55 @@ def _candidate_summary(evaluation, derived_features):
         evaluation,
         derived_features,
     )
+    candidate = evaluation.candidate
+    summary["kline_orderflow_filter"] = {
+        "enabled": candidate.orderflow_filter_lookback is not None,
+        "lookback_candles": candidate.orderflow_filter_lookback,
+        "metric": candidate.orderflow_filter_metric,
+        "operator": candidate.orderflow_filter_operator,
+        "threshold": candidate.orderflow_filter_threshold,
+        "training_winner_average": candidate.orderflow_filter_training_winner_average,
+        "training_loser_average": candidate.orderflow_filter_training_loser_average,
+        "training_winner_pass_rate": candidate.orderflow_filter_training_winner_pass_rate,
+        "training_loser_pass_rate": candidate.orderflow_filter_training_loser_pass_rate,
+        "learned_from": (
+            "training_only_frozen_before_blindtest"
+            if candidate.orderflow_filter_lookback is not None
+            else None
+        ),
+    }
+    summary["aggtrade_filter"] = {
+        "enabled": candidate.aggtrade_filter_lookback is not None,
+        "lookback_candles": candidate.aggtrade_filter_lookback,
+        "metric": candidate.aggtrade_filter_metric,
+        "operator": candidate.aggtrade_filter_operator,
+        "threshold": candidate.aggtrade_filter_threshold,
+        "training_winner_average": candidate.aggtrade_filter_training_winner_average,
+        "training_loser_average": candidate.aggtrade_filter_training_loser_average,
+        "training_winner_pass_rate": candidate.aggtrade_filter_training_winner_pass_rate,
+        "training_loser_pass_rate": candidate.aggtrade_filter_training_loser_pass_rate,
+        "learned_from": (
+            "training_only_frozen_before_blindtest"
+            if candidate.aggtrade_filter_lookback is not None
+            else None
+        ),
+    }
+    summary["context_market_filter"] = {
+        "enabled": candidate.context_filter_lookback is not None,
+        "lookback_candles": candidate.context_filter_lookback,
+        "metric": candidate.context_filter_metric,
+        "operator": candidate.context_filter_operator,
+        "threshold": candidate.context_filter_threshold,
+        "training_winner_average": candidate.context_filter_training_winner_average,
+        "training_loser_average": candidate.context_filter_training_loser_average,
+        "training_winner_pass_rate": candidate.context_filter_training_winner_pass_rate,
+        "training_loser_pass_rate": candidate.context_filter_training_loser_pass_rate,
+        "learned_from": (
+            "training_only_frozen_before_blindtest"
+            if candidate.context_filter_lookback is not None
+            else None
+        ),
+    }
     return summary
 
 
@@ -459,6 +1706,9 @@ def _aggregate_pool_result(
     start_capital,
     filters,
     htf_warmup_candles=None,
+    orderflow_warmup_candles=None,
+    aggtrade_warmup_candles=None,
+    context_warmup_candles=None,
 ):
     if not selected_pool:
         return _r._empty_simulation_result(
@@ -471,6 +1721,21 @@ def _aggregate_pool_result(
         [evaluation.candidate for evaluation in selected_pool],
         warmup_candles=htf_warmup_candles,
     )
+    orderflow_feature_series = _orderflow_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in selected_pool],
+        warmup_candles=orderflow_warmup_candles,
+    )
+    aggtrade_feature_series = _aggtrade_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in selected_pool],
+        warmup_candles=aggtrade_warmup_candles,
+    )
+    context_feature_series = _context_market_feature_series_cache(
+        candles,
+        [evaluation.candidate for evaluation in selected_pool],
+        warmup_candles=context_warmup_candles,
+    )
     proposals = []
     pool_feature_filtered_signal_count = 0
     for evaluation in selected_pool:
@@ -481,6 +1746,9 @@ def _aggregate_pool_result(
             filters,
             market,
             feature_series,
+            orderflow_feature_series,
+            aggtrade_feature_series,
+            context_feature_series,
         )
         pool_feature_filtered_signal_count += result.feature_filtered_signal_count
         for trade in result.trades:
@@ -598,10 +1866,13 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         raise ValueError(f"symbol must be {_r.CONFIG.symbol}")
     start_capital = float(stake_quote_amount)
     filters = _r.load_exchange_info_filters()
+    selection_train_candles, selection_validation_candles = (
+        _split_selection_train_validation(split.training_candles)
+    )
     candidates = _r._generate_activity_first_candidates(stake_quote_amount, profile)
     baseline_evaluations = _evaluate_training_candidates(
         candidates,
-        split.training_candles,
+        selection_train_candles,
         start_capital,
         filters,
         progress_callback,
@@ -612,7 +1883,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         for trade in evaluation.result.trades
     }
     derived_features = build_closed_timeframe_feature_snapshots(
-        split.training_candles,
+        selection_train_candles,
         decision_open_times,
     )
     derived_timeframes_available = bool(derived_features.available_timeframes)
@@ -632,16 +1903,88 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         derived_features,
         baseline_htf_analysis,
     )
+    orderflow_source_available = any(
+        candle.quote_volume > 0
+        and candle.trade_count > 0
+        and candle.taker_buy_quote_volume > 0
+        for candle in selection_train_candles
+    )
+    orderflow_candidates, learned_orderflow_rules = _learn_orderflow_filter_candidates(
+        baseline_evaluations,
+        selection_train_candles,
+    )
+    orderflow_training_edge_analysis = _orderflow_training_edge_analysis(
+        baseline_evaluations,
+        selection_train_candles,
+        learned_orderflow_rules,
+    )
+    aggtrade_status = load_agg_trade_data_status()
+    aggtrade_source_available = bool(aggtrade_status and aggtrade_status.success)
+    aggtrade_candidates, learned_aggtrade_rules = _learn_aggtrade_filter_candidates(
+        baseline_evaluations,
+        selection_train_candles,
+    )
+    aggtrade_training_edge_analysis = _aggtrade_training_edge_analysis(
+        baseline_evaluations,
+        selection_train_candles,
+        learned_aggtrade_rules,
+    )
+    context_feature_store = build_closed_context_market_feature_store(
+        selection_train_candles
+    )
+    context_sources_available = context_feature_store.available_sources
+    context_candidates, learned_context_rules = _learn_context_market_filter_candidates(
+        baseline_evaluations,
+        selection_train_candles,
+        context_feature_store,
+    )
+    context_market_training_edge_analysis = _context_market_training_edge_analysis(
+        baseline_evaluations,
+        selection_train_candles,
+        context_feature_store,
+        learned_context_rules,
+    )
     htf_evaluations = _evaluate_htf_filter_candidates(
         htf_candidates,
-        split.training_candles,
+        selection_train_candles,
         start_capital,
         filters,
         progress_callback,
     )
-    evaluations = baseline_evaluations + htf_evaluations
+    orderflow_evaluations = _evaluate_orderflow_filter_candidates(
+        orderflow_candidates,
+        selection_train_candles,
+        start_capital,
+        filters,
+        progress_callback,
+    )
+    aggtrade_evaluations = _evaluate_aggtrade_filter_candidates(
+        aggtrade_candidates,
+        selection_train_candles,
+        start_capital,
+        filters,
+        progress_callback,
+    )
+    context_evaluations = _evaluate_context_market_filter_candidates(
+        context_candidates,
+        selection_train_candles,
+        start_capital,
+        filters,
+        context_feature_store,
+        progress_callback,
+    )
+    evaluations = (
+        baseline_evaluations
+        + htf_evaluations
+        + orderflow_evaluations
+        + aggtrade_evaluations
+        + context_evaluations
+    )
     all_candidate_ids = {candidate.candidate_id for candidate in candidates}
     all_candidate_ids.update(candidate.candidate_id for candidate in htf_candidates)
+    all_candidate_ids.update(candidate.candidate_id for candidate in orderflow_candidates)
+    all_candidate_ids.update(candidate.candidate_id for candidate in aggtrade_candidates)
+    all_candidate_ids.update(candidate.candidate_id for candidate in context_candidates)
     decision_open_times.update(
         trade.entry_time
         for evaluation in htf_evaluations
@@ -649,18 +1992,69 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     )
     if htf_evaluations:
         derived_features = build_closed_timeframe_feature_snapshots(
-            split.training_candles,
+            selection_train_candles,
             decision_open_times,
         )
     allowed = [evaluation for evaluation in evaluations if evaluation.trade_allowed]
-    selected_pool = _select_candidate_pool(evaluations)
+    allowed_candidates = [evaluation.candidate for evaluation in allowed]
+    validation_evaluations = _evaluate_candidates_with_feature_caches(
+        allowed_candidates,
+        selection_validation_candles,
+        start_capital,
+        filters,
+        htf_warmup_candles=selection_train_candles[-2880:],
+        orderflow_warmup_candles=selection_train_candles[-2880:],
+        aggtrade_warmup_candles=selection_train_candles[-2880:],
+        context_warmup_candles=selection_train_candles[-2880:],
+        progress_callback=progress_callback,
+    )
+    validation_allowed = [
+        evaluation for evaluation in validation_evaluations if evaluation.trade_allowed
+    ]
+    optimized_pool, validation_pool_result, pool_selection_diagnostics = (
+        _optimize_validation_pool(
+            validation_evaluations,
+            selection_validation_candles,
+            start_capital,
+            filters,
+            htf_warmup_candles=selection_train_candles[-2880:],
+            orderflow_warmup_candles=selection_train_candles[-2880:],
+            aggtrade_warmup_candles=selection_train_candles[-2880:],
+            context_warmup_candles=selection_train_candles[-2880:],
+        )
+    )
+    validation_pool_rejection = (
+        _pool_validation_rejection(validation_pool_result)
+        if optimized_pool
+        else "no_validation_pool_candidate"
+    )
+    validation_pool_passed = validation_pool_rejection is None
+    selected_pool = optimized_pool if validation_pool_passed else []
+    training_evaluation_by_candidate_id = {
+        evaluation.candidate.candidate_id: evaluation for evaluation in evaluations
+    }
+    validation_evaluation_by_candidate_id = {
+        evaluation.candidate.candidate_id: evaluation
+        for evaluation in validation_evaluations
+    }
     best_activity = max(evaluations, key=lambda evaluation: evaluation.result.trades_per_day, default=None)
     best_edge = max(evaluations, key=lambda evaluation: evaluation.result.quote_per_day, default=None)
     best_balanced = max(evaluations, key=lambda evaluation: evaluation.balanced_score, default=None)
     fee_survivors = [evaluation for evaluation in evaluations if evaluation.result.total_net_pnl > 0]
     best_fee_survivor = max(fee_survivors, key=lambda evaluation: evaluation.result.quote_per_day, default=None)
     best_target = min(evaluations, key=lambda evaluation: evaluation.target_distance, default=None)
-    status, reason = _candidate_space_status(evaluations)
+    training_status, training_reason = _candidate_space_status(evaluations)
+    if selected_pool:
+        status = "trade_allowed_found"
+        reason = "internal selection validation found a pool candidate"
+    elif allowed:
+        status = "trade_allowed_blocked"
+        reason = (
+            "training-positive candidates failed internal selection validation "
+            "or validation-pool stress"
+        )
+    else:
+        status, reason = training_status, training_reason
     if selected_pool:
         selected_result = _aggregate_pool_result(
             split.blindtest_candles,
@@ -668,19 +2062,40 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             start_capital,
             filters,
             htf_warmup_candles=split.training_candles[-2880:],
+            orderflow_warmup_candles=split.training_candles[-2880:],
+            aggtrade_warmup_candles=split.training_candles[-2880:],
+            context_warmup_candles=split.training_candles[-2880:],
         )
-        selected_setups = [
-            _candidate_summary(evaluation, derived_features)
-            for evaluation in selected_pool
-        ]
-        selection_reason = "training_pool_one_shared_account_context"
+        selected_setups = []
+        for validation_evaluation in selected_pool:
+            training_evaluation = training_evaluation_by_candidate_id.get(
+                validation_evaluation.candidate.candidate_id,
+                validation_evaluation,
+            )
+            setup = _candidate_summary(training_evaluation, derived_features)
+            setup["selection_training_metrics"] = _compact_evaluation_metrics(
+                training_evaluation
+            )
+            setup["selection_validation_metrics"] = _compact_evaluation_metrics(
+                validation_evaluation
+            )
+            setup["selected_by"] = "selection_train_plus_internal_validation"
+            selected_setups.append(setup)
+        selection_reason = (
+            "selection_train_plus_internal_validation_pool_one_shared_account_context"
+        )
     else:
         selected_result = _r._empty_simulation_result(
             _r._diagnostic_placeholder_candidate(stake_quote_amount),
             start_capital,
         )
         selected_setups = []
-        selection_reason = "diagnostic_only_no_trade_allowed_candidate"
+        if allowed and validation_allowed:
+            selection_reason = "validation_pool_stress_blocked_no_blindtest"
+        elif allowed:
+            selection_reason = "internal_selection_validation_blocked_no_blindtest"
+        else:
+            selection_reason = "diagnostic_only_no_trade_allowed_candidate"
     daily = _r._daily_pnls(selected_result.trades)
     best_training_quote_per_day = max(
         (evaluation.result.quote_per_day for evaluation in evaluations),
@@ -743,11 +2158,186 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "target_quote_per_day": _r.TARGET_QUOTE_PER_DAY,
         "target_ratio": target_ratio,
     }
+    orderflow_allowed_count = sum(
+        evaluation.trade_allowed for evaluation in orderflow_evaluations
+    )
+    orderflow_filter_integration = {
+        "source": "ethusdc_kline_orderflow",
+        "source_available": orderflow_source_available,
+        "source_used": orderflow_source_available,
+        "source_used_for_trade_decision": bool(orderflow_candidates),
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if orderflow_candidates
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "training_only_winner_loser_separation": bool(learned_orderflow_rules),
+        "changes_score": False,
+        "changes_entry_filter": bool(orderflow_candidates),
+        "changes_trade_gates": False,
+        "blindtest_learning": False,
+        "baseline_candidate_count": len(baseline_evaluations),
+        "generated_filter_candidate_count": len(orderflow_candidates),
+        "evaluated_filter_candidate_count": len(orderflow_evaluations),
+        "baseline_trade_allowed_count": sum(
+            evaluation.trade_allowed for evaluation in baseline_evaluations
+        ),
+        "filter_trade_allowed_count": orderflow_allowed_count,
+        "additional_trade_allowed_count": orderflow_allowed_count,
+        "candidate_space_before": baseline_status,
+        "candidate_space_before_reason": baseline_reason,
+        "candidate_space_after": status,
+        "trade_allowed_blocked_resolved": (
+            baseline_status == "trade_allowed_blocked" and bool(allowed)
+        ),
+        "learned_rules": learned_orderflow_rules,
+        "selected_filter_candidate_count": sum(
+            evaluation.candidate.orderflow_filter_lookback is not None
+            for evaluation in selected_pool
+        ),
+        "blindtest_trade_count": selected_result.trade_count,
+        "blindtest_quote_per_day": selected_result.quote_per_day,
+        "target_quote_per_day": _r.TARGET_QUOTE_PER_DAY,
+        "target_ratio": target_ratio,
+    }
+    aggtrade_allowed_count = sum(
+        evaluation.trade_allowed for evaluation in aggtrade_evaluations
+    )
+    aggtrade_filter_integration = {
+        "source": "ethusdc_agg_trade_minutes",
+        "source_available": aggtrade_source_available,
+        "source_used": aggtrade_source_available,
+        "source_used_for_trade_decision": bool(aggtrade_candidates),
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if aggtrade_candidates
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "training_only_winner_loser_separation": bool(learned_aggtrade_rules),
+        "changes_score": False,
+        "changes_entry_filter": bool(aggtrade_candidates),
+        "changes_trade_gates": False,
+        "blindtest_learning": False,
+        "baseline_candidate_count": len(baseline_evaluations),
+        "generated_filter_candidate_count": len(aggtrade_candidates),
+        "evaluated_filter_candidate_count": len(aggtrade_evaluations),
+        "baseline_trade_allowed_count": sum(
+            evaluation.trade_allowed for evaluation in baseline_evaluations
+        ),
+        "filter_trade_allowed_count": aggtrade_allowed_count,
+        "additional_trade_allowed_count": aggtrade_allowed_count,
+        "candidate_space_before": baseline_status,
+        "candidate_space_before_reason": baseline_reason,
+        "candidate_space_after": status,
+        "trade_allowed_blocked_resolved": (
+            baseline_status == "trade_allowed_blocked" and bool(allowed)
+        ),
+        "learned_rules": learned_aggtrade_rules,
+        "selected_filter_candidate_count": sum(
+            evaluation.candidate.aggtrade_filter_lookback is not None
+            for evaluation in selected_pool
+        ),
+        "blindtest_trade_count": selected_result.trade_count,
+        "blindtest_quote_per_day": selected_result.quote_per_day,
+        "target_quote_per_day": _r.TARGET_QUOTE_PER_DAY,
+        "target_ratio": target_ratio,
+    }
+    context_allowed_count = sum(
+        evaluation.trade_allowed for evaluation in context_evaluations
+    )
+    context_market_filter_integration = {
+        "sources": ("BTCUSDC", "ETHBTC", "ETHUSDT", "USDCUSDT"),
+        "available_sources": context_sources_available,
+        "source_coverage": {
+            symbol: round(coverage, 6)
+            for symbol, coverage in context_feature_store.source_coverage.items()
+        },
+        "source_available": bool(context_sources_available),
+        "source_used": bool(context_sources_available),
+        "source_used_for_trade_decision": bool(context_candidates),
+        "usage_mode": (
+            "training_only_learned_frozen_entry_filter"
+            if context_candidates
+            else "diagnostic_only_no_stable_candidate_rule"
+        ),
+        "training_only_winner_loser_separation": bool(learned_context_rules),
+        "changes_score": False,
+        "changes_entry_filter": bool(context_candidates),
+        "changes_trade_gates": False,
+        "blindtest_learning": False,
+        "baseline_candidate_count": len(baseline_evaluations),
+        "generated_filter_candidate_count": len(context_candidates),
+        "evaluated_filter_candidate_count": len(context_evaluations),
+        "baseline_trade_allowed_count": sum(
+            evaluation.trade_allowed for evaluation in baseline_evaluations
+        ),
+        "filter_trade_allowed_count": context_allowed_count,
+        "additional_trade_allowed_count": context_allowed_count,
+        "candidate_space_before": baseline_status,
+        "candidate_space_before_reason": baseline_reason,
+        "candidate_space_after": status,
+        "trade_allowed_blocked_resolved": (
+            baseline_status == "trade_allowed_blocked" and bool(allowed)
+        ),
+        "learned_rules": learned_context_rules,
+        "selected_filter_candidate_count": sum(
+            evaluation.candidate.context_filter_lookback is not None
+            for evaluation in selected_pool
+        ),
+        "blindtest_trade_count": selected_result.trade_count,
+        "blindtest_quote_per_day": selected_result.quote_per_day,
+        "target_quote_per_day": _r.TARGET_QUOTE_PER_DAY,
+        "target_ratio": target_ratio,
+    }
+    selection_validation_summary = {
+        "selection_validation_used": bool(selection_validation_candles),
+        "selection_train_start": (
+            selection_train_candles[0].open_time if selection_train_candles else None
+        ),
+        "selection_train_end": (
+            selection_train_candles[-1].open_time if selection_train_candles else None
+        ),
+        "selection_validation_start": (
+            selection_validation_candles[0].open_time
+            if selection_validation_candles
+            else None
+        ),
+        "selection_validation_end": (
+            selection_validation_candles[-1].open_time
+            if selection_validation_candles
+            else None
+        ),
+        "selection_train_candle_count": len(selection_train_candles),
+        "selection_validation_candle_count": len(selection_validation_candles),
+        "learning_scope": "selection_train_only",
+        "validation_leakage_risk": "none_known",
+        "pre_validation_trade_allowed_count": len(allowed),
+        "validated_candidate_count": len(validation_evaluations),
+        "post_validation_trade_allowed_count": len(validation_allowed),
+        "validation_rejection_counts": _r._rejection_counts(validation_evaluations),
+        "pool_selection": pool_selection_diagnostics,
+        "validation_pool_quote_per_day": validation_pool_result.quote_per_day,
+        "validation_pool_total_net_pnl": validation_pool_result.total_net_pnl,
+        "validation_pool_trade_count": validation_pool_result.trade_count,
+        "validation_pool_max_drawdown": validation_pool_result.max_drawdown,
+        "validation_pool_profit_factor": _r._profit_factor(
+            validation_pool_result.trades
+        ),
+        "validation_pool_fee_to_gross_ratio": _r._fee_to_gross_ratio(
+            validation_pool_result
+        ),
+        "validation_pool_passed": validation_pool_passed,
+        "validation_pool_rejection_reason": validation_pool_rejection,
+        "final_blindtest_pool_size": len(selected_pool),
+    }
     rejection_summary = {
         "router_name": "activity_first_router",
         "candidate_space_status": status,
         "candidate_space_reason": reason,
+        "training_candidate_space_status": training_status,
+        "training_candidate_space_reason": training_reason,
         "rejection_counts": _r._rejection_counts(evaluations),
+        "selection_validation": selection_validation_summary,
         "search_pass_summary": _search_pass_summary(evaluations, derived_features),
         "eth_regime_diagnostics": _r._eth_regime_diagnostics(split.training_candles),
         "derived_timeframes_available": derived_timeframes_available,
@@ -761,6 +2351,12 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             else "candidate_entry_diagnostics_only_no_gate_or_score_change"
         ),
         "derived_timeframe_training_edge_analysis": htf_training_edge_analysis,
+        "kline_orderflow_training_edge_analysis": orderflow_training_edge_analysis,
+        "kline_orderflow_filter_integration": orderflow_filter_integration,
+        "aggtrade_training_edge_analysis": aggtrade_training_edge_analysis,
+        "aggtrade_filter_integration": aggtrade_filter_integration,
+        "context_market_training_edge_analysis": context_market_training_edge_analysis,
+        "context_market_filter_integration": context_market_filter_integration,
         "htf_filter_integration": htf_filter_integration,
         "best_activity_candidate": _candidate_summary(best_activity, derived_features) if best_activity else None,
         "best_edge_candidate": _candidate_summary(best_edge, derived_features) if best_edge else None,
@@ -782,14 +2378,14 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "run_type": "unknown",
         "smoke_test_not_performance_proof": False,
         "live_release_allowed": False,
-        "legacy_cluster_router_used": False,
         "diagnostic_only": not selected_pool,
         "trade_allowed": bool(selected_pool),
         "blindtest_strategy_executed": bool(selected_pool),
-        "selection_policy": "training_top_n_pool_one_shared_account_context",
+        "selection_policy": "selection_train_validation_guard_pool_one_shared_account_context",
         "selection_reason": selection_reason,
         "exchange_info_filters_used": filters is not None,
-        "candidate_generation_version": "activity_first_v7_htf_training_filter",
+        "candidate_generation_version": "activity_first_v14_conservative_regime_pool",
+        "base_candidate_generation_version": "activity_first_v11_eth_regime_expanded",
         "eth_specific_strategy_scope": True,
         "historical_news_labels_used": False,
         "historical_orderbook_used": False,
@@ -798,11 +2394,15 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "eth_selection_penalty_used": True,
         "multi_candidate_pool_used": True,
         "pool_overlap_guard_used": True,
+        "selection_validation_guard_used": True,
+        "validation_optimized_pool_used": True,
+        "conservative_regime_pool_used": True,
         "pool_execution_policy": "one_position_at_a_time",
         "selected_pool_size": len(selected_pool),
         "pool_raw_proposals": selected_result.signal_count,
         "pool_executed_trades": selected_result.trade_count,
         "pool_skipped_overlaps": selected_result.no_trade_count,
+        "selection_validation": selection_validation_summary,
         "derived_timeframes_available": derived_timeframes_available,
         "derived_timeframes_used_by_router": derived_timeframes_used_by_router,
         "used_timeframes": derived_features.used_timeframes,
@@ -815,6 +2415,22 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "derived_timeframe_training_edge_analysis_available": bool(derived_features.used_timeframes),
         "derived_timeframes_used_for_trade_decision": bool(htf_candidates),
         "htf_filter_integration": htf_filter_integration,
+        "kline_orderflow_available": orderflow_source_available,
+        "kline_orderflow_used_by_router": orderflow_source_available,
+        "kline_orderflow_used_for_trade_decision": bool(orderflow_candidates),
+        "kline_orderflow_training_edge_analysis_available": True,
+        "kline_orderflow_filter_integration": orderflow_filter_integration,
+        "aggtrade_available": aggtrade_source_available,
+        "aggtrade_used_by_router": aggtrade_source_available,
+        "aggtrade_used_for_trade_decision": bool(aggtrade_candidates),
+        "aggtrade_training_edge_analysis_available": True,
+        "aggtrade_filter_integration": aggtrade_filter_integration,
+        "context_markets_available": bool(context_sources_available),
+        "context_markets_available_sources": context_sources_available,
+        "context_markets_used_by_router": bool(context_sources_available),
+        "context_markets_used_for_trade_decision": bool(context_candidates),
+        "context_market_training_edge_analysis_available": True,
+        "context_market_filter_integration": context_market_filter_integration,
     }
     return _r.ActivityFirstRouterReport(
         run_id,
@@ -832,7 +2448,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         reason,
         len(all_candidate_ids),
         len(evaluations),
-        len(allowed),
+        len(validation_allowed) if validation_pool_passed else 0,
         len(selected_pool),
         sum(1 for evaluation in evaluations if evaluation.rejection_reason),
         selected_setups,

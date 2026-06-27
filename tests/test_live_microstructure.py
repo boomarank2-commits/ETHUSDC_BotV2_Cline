@@ -91,6 +91,43 @@ def test_current_collector_status_does_not_start_duplicate_process(
     assert live_module.ensure_live_microstructure_collection_started() == current
 
 
+def test_corrupt_status_file_is_treated_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_paths(monkeypatch, tmp_path)
+    live_module.LIVE_MICROSTRUCTURE_DIR.mkdir(parents=True, exist_ok=True)
+    live_module.LIVE_MICROSTRUCTURE_STATUS_PATH.write_bytes(b"\x00" * 128)
+
+    assert live_module.load_live_microstructure_status() is None
+
+
+def test_status_save_replaces_corrupt_file_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_paths(monkeypatch, tmp_path)
+    live_module.LIVE_MICROSTRUCTURE_DIR.mkdir(parents=True, exist_ok=True)
+    live_module.LIVE_MICROSTRUCTURE_STATUS_PATH.write_bytes(b"\x00" * 128)
+    status = live_module.LiveMicrostructureStatus(
+        True,
+        "active",
+        True,
+        123,
+        None,
+        None,
+        0,
+        0.0,
+        False,
+        str(tmp_path / "live"),
+        None,
+    )
+
+    live_module._save_status(status)
+
+    assert live_module.load_live_microstructure_status() == status
+
+
 def test_stop_request_waits_for_collector_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

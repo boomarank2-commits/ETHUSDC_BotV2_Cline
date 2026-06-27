@@ -5,21 +5,9 @@ from threading import Event, Thread
 from time import time
 from typing import Callable
 
-from src.backtest.buy_hold_benchmark import (
-    build_buy_hold_benchmark_report,
-    save_buy_hold_benchmark_report,
-)
 from src.backtest.run_finalizer import mark_backtest_run_completed, mark_backtest_run_failed
 from src.backtest.run_initializer import initialize_backtest_run
 from src.backtest.run_progress import BacktestRunProgress, save_run_progress
-from src.backtest.strategy_v0_report import (
-    build_strategy_v0_training_blindtest_report,
-    save_strategy_v0_report,
-)
-from src.backtest.strategy_v1_report import (
-    build_strategy_v1_training_blindtest_report,
-    save_strategy_v1_report,
-)
 from src.data.data_overview import build_data_overview_report, save_data_overview_report
 from src.data.data_preparation_report import (
     build_data_preparation_report,
@@ -32,10 +20,8 @@ from src.data.train_blind_split_report import (
     save_train_blind_split_report,
 )
 from src.reports.backtest_summary import build_backtest_summary, save_backtest_summary
-from src.router.activity_first_router_report import (
-    build_activity_first_router_report,
-    save_activity_first_router_report,
-)
+from src.router import build_activity_first_router_report
+from src.router.activity_first_router_report import save_activity_first_router_report
 
 
 @dataclass(frozen=True)
@@ -48,10 +34,6 @@ class PreparationPipelineResult:
     data_preparation_report_path: str
     data_overview_report_path: str | None
     train_blind_split_report_path: str
-    buy_hold_benchmark_report_path: str | None
-    strategy_v0_report_path: str | None
-    strategy_v1_report_path: str | None
-    cluster_router_report_path: str | None
     backtest_summary_path: str | None
     progress_path: str
     error: str | None
@@ -123,14 +105,17 @@ def _start_heartbeat_progress(
             tick += 1
             pct = min(max_pct, base_pct + tick * 0.25)
             message = f"{detail} - läuft weiter; längere Smoke-Dauer braucht entsprechend länger"
-            _save_progress(
-                run_id,
-                "running",
-                stage,
-                pct,
-                message=message,
-                started_at=started_at,
-            )
+            try:
+                _save_progress(
+                    run_id,
+                    "running",
+                    stage,
+                    pct,
+                    message=message,
+                    started_at=started_at,
+                )
+            except PermissionError:
+                continue
             _emit_progress(
                 progress_callback,
                 stage,
@@ -152,7 +137,7 @@ def run_backtest_preparation_pipeline(
     training_days: int | None = None,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> PreparationPipelineResult:
-    """Run data preparation, split, benchmark and strategy reports."""
+    """Run the one shared Activity-First pipeline for Full and Smoke."""
     if run_type not in {"full_backtest", "smoke_test"}:
         msg = "run_type must be full_backtest or smoke_test"
         raise ValueError(msg)
@@ -168,10 +153,6 @@ def run_backtest_preparation_pipeline(
     data_report_path = ""
     data_overview_path: str | None = None
     split_report_path = ""
-    benchmark_report_path: str | None = None
-    strategy_v0_report_path: str | None = None
-    strategy_v1_report_path: str | None = None
-    cluster_router_report_path: str | None = None
     activity_first_router_report_path: str | None = None
     summary_path: str | None = None
     progress_path = ""
@@ -233,10 +214,6 @@ def run_backtest_preparation_pipeline(
                 data_preparation_report_path=data_report_path,
                 data_overview_report_path=data_overview_path,
                 train_blind_split_report_path="",
-                buy_hold_benchmark_report_path=None,
-                strategy_v0_report_path=None,
-                strategy_v1_report_path=None,
-                cluster_router_report_path=None,
                 activity_first_router_report_path=None,
                 backtest_summary_path=summary_path,
                 progress_path=progress_path,
@@ -261,35 +238,6 @@ def run_backtest_preparation_pipeline(
             "Train/Blindtest Split abgeschlossen",
             run_id=run_id,
         )
-        _emit_progress(
-            progress_callback,
-            "buyhold_started",
-            50.0,
-            "Buy-and-Hold Benchmark läuft",
-            run_id=run_id,
-        )
-        progress_path = _save_progress(run_id, "running", "buy_hold_benchmark", 50.0, started_at=started_at)
-        benchmark_report = build_buy_hold_benchmark_report(run_id, split)
-        benchmark_report_path = str(save_buy_hold_benchmark_report(benchmark_report))
-        progress_path = _save_progress(run_id, "running", "strategy_v0", 60.0, started_at=started_at)
-        _emit_progress(
-            progress_callback,
-            "strategy_v0_started",
-            60.0,
-            "Strategy V0 Vergleich läuft",
-            run_id=run_id,
-        )
-        strategy_v0_report = build_strategy_v0_training_blindtest_report(run_id, split)
-        strategy_v0_report_path = str(save_strategy_v0_report(strategy_v0_report))
-        progress_path = _save_progress(run_id, "running", "strategy_v1", 70.0, started_at=started_at)
-        strategy_v1_report = build_strategy_v1_training_blindtest_report(
-            run_id,
-            split,
-            stake_quote_amount=stake_quote_amount,
-            profile=profile,
-            progress_callback=progress_callback,
-        )
-        strategy_v1_report_path = str(save_strategy_v1_report(strategy_v1_report))
         progress_path = _save_progress(
             run_id,
             "running",
@@ -363,10 +311,6 @@ def run_backtest_preparation_pipeline(
             data_preparation_report_path=data_report_path,
             data_overview_report_path=data_overview_path,
             train_blind_split_report_path=split_report_path,
-            buy_hold_benchmark_report_path=benchmark_report_path,
-            strategy_v0_report_path=strategy_v0_report_path,
-            strategy_v1_report_path=strategy_v1_report_path,
-            cluster_router_report_path=cluster_router_report_path,
             activity_first_router_report_path=activity_first_router_report_path,
             backtest_summary_path=summary_path,
             progress_path=progress_path,
@@ -406,10 +350,6 @@ def run_backtest_preparation_pipeline(
             data_preparation_report_path=data_report_path,
             data_overview_report_path=data_overview_path,
             train_blind_split_report_path=split_report_path,
-            buy_hold_benchmark_report_path=benchmark_report_path,
-            strategy_v0_report_path=strategy_v0_report_path,
-            strategy_v1_report_path=strategy_v1_report_path,
-            cluster_router_report_path=cluster_router_report_path,
             activity_first_router_report_path=activity_first_router_report_path,
             backtest_summary_path=summary_path,
             progress_path=progress_path,

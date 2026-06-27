@@ -109,7 +109,6 @@ def _context_candle_status(symbol: str, label: str) -> DataAreaStatus:
         )
     age_hours = _age_hours(quality.last_open_time)
     usable = quality.has_required_lookback and quality.detected_gaps == 0
-    used = usable and symbol in {"BTCUSDC", "ETHBTC"}
     return DataAreaStatus(
         data_kind=f"{symbol.lower()}_klines_1m",
         label=label,
@@ -122,15 +121,11 @@ def _context_candle_status(symbol: str, label: str) -> DataAreaStatus:
         expected_min_rows=EXPECTED_MIN_CANDLES,
         detected_gaps=quality.detected_gaps,
         usable_for_backtest=usable,
-        used_in_backtest=used,
+        used_in_backtest=usable,
         usage_reason=(
-            "Strategy V1 context filter"
-            if used
-            else (
-                "downloaded for later router feature wiring"
-                if usable
-                else "context not usable"
-            )
+            "Activity-First Router training-only cross-market diagnostics and frozen filter candidates"
+            if usable
+            else "context not usable"
         ),
     )
 
@@ -150,7 +145,7 @@ def _exchange_info_status() -> DataAreaStatus:
         detected_gaps=None,
         usable_for_backtest=status.usable_for_backtest,
         used_in_backtest=status.usable_for_backtest,
-        usage_reason="MIN_NOTIONAL, LOT_SIZE stepSize/minQty and PRICE_FILTER tickSize used by Strategy V1 simulation"
+        usage_reason="MIN_NOTIONAL, LOT_SIZE stepSize/minQty and PRICE_FILTER tickSize used by Activity-First simulation"
         if status.usable_for_backtest
         else f"exchange_info unavailable: {status.reason}",
     )
@@ -178,9 +173,9 @@ def _enhanced_kline_status() -> DataAreaStatus:
         expected_min_rows=EXPECTED_MIN_CANDLES,
         detected_gaps=None,
         usable_for_backtest=available,
-        used_in_backtest=False,
+        used_in_backtest=available,
         usage_reason=(
-            "downloaded for later time-safe order-flow feature wiring"
+            "Activity-First Router training-only order-flow diagnostics and frozen filter candidates"
             if available
             else "legacy candle CSV lacks Binance quote/trade/taker fields"
         ),
@@ -202,9 +197,9 @@ def _agg_trade_status() -> DataAreaStatus:
         expected_min_rows=None,
         detected_gaps=None,
         usable_for_backtest=available,
-        used_in_backtest=False,
+        used_in_backtest=available,
         usage_reason=(
-            "official Binance archives downloaded; router feature wiring is a later patch"
+            "Activity-First Router training-only aggTrade diagnostics and frozen filter candidates"
             if available
             else "official Binance archive partitions are incomplete"
         ),

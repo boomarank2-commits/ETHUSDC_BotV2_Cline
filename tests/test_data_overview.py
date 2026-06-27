@@ -2,6 +2,7 @@ import src.data.data_overview as overview_module
 from src.data.candle_quality import CandleQualityReport
 from src.data.data_overview import build_data_overview_report, load_data_overview_report, save_data_overview_report
 from src.data.exchange_info import ExchangeInfoStatus
+from src.data.agg_trade_data_ensure import AggTradeDataEnsureResult
 
 
 def _quality() -> CandleQualityReport:
@@ -38,7 +39,7 @@ def test_data_overview_marks_ethusdc_candles_as_used(monkeypatch) -> None:
     assert exchange_info.used_in_backtest is True
     assert btc.used_in_backtest is True
     assert ethusdt.usable_for_backtest is True
-    assert ethusdt.used_in_backtest is False
+    assert ethusdt.used_in_backtest is True
 
 
 def test_data_overview_save_and_load(monkeypatch) -> None:
@@ -53,3 +54,26 @@ def test_data_overview_save_and_load(monkeypatch) -> None:
     save_data_overview_report(report)
 
     assert load_data_overview_report(report.run_id) == report
+
+
+def test_data_overview_marks_complete_aggtrades_as_router_used(monkeypatch) -> None:
+    monkeypatch.setattr(overview_module, "build_local_candle_quality_from_catalog", lambda *args: _quality())
+    monkeypatch.setattr(
+        overview_module,
+        "ensure_exchange_info_current",
+        lambda: ExchangeInfoStatus("ETHUSDC", "exchange.json", True, False, 1.0, 1, True, False, None),
+    )
+    monkeypatch.setattr(
+        overview_module,
+        "load_agg_trade_data_status",
+        lambda: AggTradeDataEnsureResult(
+            True, "complete", 90, "2023-01", "2026-01", "2026-01-31", "data/agg", False, None,
+        ),
+    )
+
+    report = build_data_overview_report("run_20260626_aggtrade")
+
+    aggtrades = next(area for area in report.areas if area.data_kind == "ethusdc_agg_trades")
+    assert aggtrades.usable_for_backtest is True
+    assert aggtrades.used_in_backtest is True
+    assert "frozen filter candidates" in aggtrades.usage_reason

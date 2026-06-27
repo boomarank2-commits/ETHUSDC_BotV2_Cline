@@ -1,6 +1,7 @@
 """UI controller for running the benchmark pipeline without UI dependencies."""
 
 from dataclasses import dataclass
+from json import JSONDecodeError
 from pathlib import Path
 from time import time
 from typing import Callable
@@ -113,7 +114,7 @@ class BacktestUiResult:
 def _load_data_areas(run_id: str) -> list[dict] | None:
     try:
         report = load_data_overview_report(run_id)
-    except FileNotFoundError:
+    except (FileNotFoundError, JSONDecodeError, PermissionError):
         return None
     return [area.__dict__ for area in report.areas]
 
@@ -129,7 +130,7 @@ def _result_from_summary(summary: BacktestSummary, report_path: str) -> Backtest
         progress_stage = progress.stage
         elapsed_seconds = progress.runtime_seconds
         estimated_remaining_seconds = progress.estimated_remaining_seconds
-    except FileNotFoundError:
+    except (FileNotFoundError, JSONDecodeError, PermissionError):
         pass
     return BacktestUiResult(
         success=summary.status == "completed",
@@ -187,7 +188,7 @@ def _load_run_result_if_summary_exists(run_id: str) -> BacktestUiResult | None:
 def _load_running_run_result(run_id: str) -> BacktestUiResult | None:
     try:
         progress = load_run_progress(run_id)
-    except FileNotFoundError:
+    except (FileNotFoundError, JSONDecodeError, PermissionError):
         return None
     if progress.status != "running":
         return None

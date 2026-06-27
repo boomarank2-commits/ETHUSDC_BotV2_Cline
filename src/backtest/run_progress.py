@@ -1,14 +1,18 @@
 """Technical progress persistence for future backtest runs."""
 
 import json
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any
+from uuid import uuid4
 
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
 
 PROGRESS_FILENAME = "progress.json"
 ALLOWED_PROGRESS_STATUSES = frozenset({"initialized", "running", "completed", "failed"})
+WINDOWS_REPLACE_RETRY_DELAYS_SECONDS = (0.02, 0.05, 0.10, 0.20, 0.40, 0.80)
 
 
 @dataclass(frozen=True)
@@ -52,12 +56,33 @@ def default_run_progress(run_id: str) -> BacktestRunProgress:
 
 
 def save_run_progress(progress: BacktestRunProgress) -> Path:
-    """Save run progress as readable JSON."""
+    """Save progress atomically so UI refreshes never observe partial JSON.
+
+    Windows can briefly deny ``os.replace`` while the Tk UI, antivirus, or another
+    writer has the current ``progress.json`` open.  Use a unique temp file per
+    write and retry the replace instead of letting the heartbeat thread die.
+    """
     report_dir = ensure_run_report_dir(progress.run_id)
     progress_path = report_dir / PROGRESS_FILENAME
+    temp_path = progress_path.with_name(f"{progress_path.name}.{uuid4().hex}.tmp")
     content = json.dumps(asdict(progress), indent=2, sort_keys=True)
-    progress_path.write_text(f"{content}\n", encoding="utf-8")
-    return progress_path
+    temp_path.write_text(f"{content}\n", encoding="utf-8")
+    last_error: PermissionError | None = None
+    try:
+        for delay_seconds in (0.0, *WINDOWS_REPLACE_RETRY_DELAYS_SECONDS):
+            if delay_seconds:
+                sleep(delay_seconds)
+            try:
+                temp_path.replace(progress_path)
+                return progress_path
+            except PermissionError as error:
+                last_error = error
+        if last_error is not None:
+            raise last_error
+        return progress_path
+    finally:
+        with suppress(OSError):
+            temp_path.unlink()
 
 
 def load_run_progress(run_id: str) -> BacktestRunProgress:

@@ -1,4 +1,5 @@
 from dataclasses import fields
+from json import JSONDecodeError
 
 import pytest
 
@@ -131,10 +132,7 @@ def _pipeline_result(
         data_preparation_report_path="data.json",
         data_overview_report_path="data_overview.json" if summary_path else None,
         train_blind_split_report_path="split.json",
-        buy_hold_benchmark_report_path="benchmark.json" if summary_path else None,
-        strategy_v0_report_path="strategy.json" if summary_path else None,
-        strategy_v1_report_path="strategy_v1.json" if summary_path else None,
-        cluster_router_report_path="cluster_router.json" if summary_path else None,
+        activity_first_router_report_path="activity_first_router_report.json" if summary_path else None,
         backtest_summary_path=summary_path,
         progress_path="progress.json",
         error=None if summary_path else "missing summary",
@@ -538,7 +536,7 @@ def test_load_active_backtest_result_shows_running_run_without_summary(monkeypat
     run_dir = reports_dir / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "progress.json").write_text(
-        '{"run_id":"run_20260612_230004","status":"running","stage":"strategy_v1","progress_pct":75.0,"message":null,"error":null}',
+        '{"run_id":"run_20260612_230004","status":"running","stage":"activity_first_router","progress_pct":75.0,"message":null,"error":null}',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -551,7 +549,7 @@ def test_load_active_backtest_result_shows_running_run_without_summary(monkeypat
     monkeypatch.setattr(
         controller_module,
         "load_run_progress",
-        lambda active_run_id: BacktestRunProgress(active_run_id, "running", "strategy_v1", 75.0, None, None, 300.0, 100.0),
+        lambda active_run_id: BacktestRunProgress(active_run_id, "running", "activity_first_router", 75.0, None, None, 300.0, 100.0),
     )
     monkeypatch.setattr(controller_module, "time", lambda: (run_dir / "run_request.json").stat().st_mtime + 300.0)
     (run_dir / "run_request.json").write_text("{}", encoding="utf-8")
@@ -563,10 +561,46 @@ def test_load_active_backtest_result_shows_running_run_without_summary(monkeypat
     assert result.status == "running"
     assert "Backtest läuft" in result.message
     assert result.progress_pct == 75.0
-    assert result.progress_stage == "strategy_v1"
+    assert result.progress_stage == "activity_first_router"
     assert result.elapsed_seconds == 300.0
     assert result.estimated_remaining_seconds == 100.0
     assert "Rest geschätzt" in result.message
+
+
+def test_running_progress_json_race_is_ignored_until_next_ui_refresh(monkeypatch) -> None:
+    run_id = "run_20260612_230011"
+    monkeypatch.setattr(
+        controller_module,
+        "load_runtime_state",
+        lambda: RuntimeState(active_run_id=run_id, status="running", last_error=None),
+    )
+    monkeypatch.setattr(controller_module, "_load_run_result_if_summary_exists", lambda _: None)
+    monkeypatch.setattr(
+        controller_module,
+        "load_run_progress",
+        lambda _: (_ for _ in ()).throw(JSONDecodeError("partial", "", 0)),
+    )
+    monkeypatch.setattr(controller_module, "load_latest_completed_backtest_result_for_ui", lambda: None)
+
+    assert load_active_backtest_result_for_ui() is None
+
+
+def test_running_progress_windows_file_lock_is_ignored_until_next_ui_refresh(monkeypatch) -> None:
+    run_id = "run_20260612_230012"
+    monkeypatch.setattr(
+        controller_module,
+        "load_runtime_state",
+        lambda: RuntimeState(active_run_id=run_id, status="running", last_error=None),
+    )
+    monkeypatch.setattr(controller_module, "_load_run_result_if_summary_exists", lambda _: None)
+    monkeypatch.setattr(
+        controller_module,
+        "load_run_progress",
+        lambda _: (_ for _ in ()).throw(PermissionError("temporarily locked")),
+    )
+    monkeypatch.setattr(controller_module, "load_latest_completed_backtest_result_for_ui", lambda: None)
+
+    assert load_active_backtest_result_for_ui() is None
 
 
 def test_load_active_backtest_result_returns_none_without_active_run_or_summary(monkeypatch, tmp_path) -> None:

@@ -371,6 +371,11 @@ class BacktestApp:
             return "LÄUFT: Ergebnis noch nicht bewerten."
         if not result.success:
             return "FEHLGESCHLAGEN: Backtest/Smoke technisch prüfen."
+        if (
+            result.no_robust_positive_candidate
+            and result.candidate_space_status == "trade_allowed_blocked"
+        ):
+            return "NICHT UEBERNEHMEN: Training-Kandidaten vorhanden, aber Validation/Robustheit blockiert."
         if result.no_robust_positive_candidate:
             return "NICHT ÜBERNEHMEN: Kein trade_allowed Kandidat gefunden."
         if result.quote_per_day is not None and result.quote_per_day >= TARGET_QUOTE_PER_DAY:

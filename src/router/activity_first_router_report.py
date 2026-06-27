@@ -8,8 +8,11 @@ from typing import Any, Callable
 from src.common.config import CONFIG
 from src.common.report_paths import ensure_run_report_dir, get_run_report_dir
 from src.data.candle_schema import Candle
+from src.data.agg_trade_feature_series import AggTradeFeatureSeries
+from src.data.context_market_features import ContextMarketFeatureSeries
 from src.data.derived_timeframes import DerivedTimeframeFeatureSeries
 from src.data.exchange_info import ExchangeInfoFilters, load_exchange_info_filters, round_price_to_tick, round_quantity_to_step
+from src.data.kline_orderflow_features import KlineOrderflowFeatureSeries
 from src.data.train_blind_split import TrainBlindSplit
 
 ACTIVITY_FIRST_ROUTER_REPORT_FILENAME = "activity_first_router_report.json"
@@ -39,6 +42,30 @@ class ActivityFirstCandidate:
     htf_filter_training_loser_average: float | None = None
     htf_filter_training_winner_pass_rate: float | None = None
     htf_filter_training_loser_pass_rate: float | None = None
+    orderflow_filter_lookback: int | None = None
+    orderflow_filter_metric: str | None = None
+    orderflow_filter_operator: str | None = None
+    orderflow_filter_threshold: float | None = None
+    orderflow_filter_training_winner_average: float | None = None
+    orderflow_filter_training_loser_average: float | None = None
+    orderflow_filter_training_winner_pass_rate: float | None = None
+    orderflow_filter_training_loser_pass_rate: float | None = None
+    aggtrade_filter_lookback: int | None = None
+    aggtrade_filter_metric: str | None = None
+    aggtrade_filter_operator: str | None = None
+    aggtrade_filter_threshold: float | None = None
+    aggtrade_filter_training_winner_average: float | None = None
+    aggtrade_filter_training_loser_average: float | None = None
+    aggtrade_filter_training_winner_pass_rate: float | None = None
+    aggtrade_filter_training_loser_pass_rate: float | None = None
+    context_filter_lookback: int | None = None
+    context_filter_metric: str | None = None
+    context_filter_operator: str | None = None
+    context_filter_threshold: float | None = None
+    context_filter_training_winner_average: float | None = None
+    context_filter_training_loser_average: float | None = None
+    context_filter_training_winner_pass_rate: float | None = None
+    context_filter_training_loser_pass_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -360,6 +387,26 @@ def _generate_activity_first_candidates(stake_quote_amount: float, profile: str)
         (0.0075, 0.030, 0.014, 1080),
     )
     _add_candidates(candidates, eth_families, (15, 30, 60, 120, 240), eth_setups, stake_quote_amount, "eth_regime_discovery", 3)
+    expanded_eth_lookbacks = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360)
+    expanded_eth_setups = (
+        (0.0010, 0.0045, 0.0035, 60),
+        (0.0015, 0.0075, 0.0045, 120),
+        (0.0020, 0.0100, 0.0055, 180),
+        (0.0030, 0.0150, 0.0075, 360),
+        (0.0040, 0.0200, 0.0100, 720),
+        (0.0060, 0.0300, 0.0120, 1080),
+        (0.0085, 0.0400, 0.0160, 1440),
+        (0.0110, 0.0550, 0.0220, 2160),
+    )
+    _add_candidates(
+        candidates,
+        eth_families,
+        expanded_eth_lookbacks,
+        expanded_eth_setups,
+        stake_quote_amount,
+        "eth_regime_expanded",
+        3,
+    )
     return candidates
 
 
@@ -543,6 +590,85 @@ def _htf_filter_allows_entry(
     return value is not None and value >= candidate.htf_filter_min_value
 
 
+def _orderflow_filter_allows_entry(
+    candidate: ActivityFirstCandidate,
+    index: int,
+    orderflow_feature_series: dict[int, KlineOrderflowFeatureSeries] | None,
+) -> bool:
+    if candidate.orderflow_filter_lookback is None:
+        return True
+    if (
+        candidate.orderflow_filter_metric is None
+        or candidate.orderflow_filter_operator not in {">=", "<="}
+        or candidate.orderflow_filter_threshold is None
+        or orderflow_feature_series is None
+    ):
+        return False
+    series = orderflow_feature_series.get(candidate.orderflow_filter_lookback)
+    if series is None:
+        return False
+    value = series.value_at(candidate.orderflow_filter_metric, index)
+    if value is None:
+        return False
+    if candidate.orderflow_filter_operator == ">=":
+        return value >= candidate.orderflow_filter_threshold
+    return value <= candidate.orderflow_filter_threshold
+
+
+def _aggtrade_filter_allows_entry(
+    candidate: ActivityFirstCandidate,
+    index: int,
+    aggtrade_feature_series: dict[int, AggTradeFeatureSeries] | None,
+) -> bool:
+    if candidate.aggtrade_filter_lookback is None:
+        return True
+    if (
+        candidate.aggtrade_filter_metric is None
+        or candidate.aggtrade_filter_operator not in {">=", "<="}
+        or candidate.aggtrade_filter_threshold is None
+        or aggtrade_feature_series is None
+    ):
+        return False
+    series = aggtrade_feature_series.get(candidate.aggtrade_filter_lookback)
+    if series is None:
+        return False
+    value = series.value_at(candidate.aggtrade_filter_metric, index)
+    if value is None:
+        return False
+    return (
+        value >= candidate.aggtrade_filter_threshold
+        if candidate.aggtrade_filter_operator == ">="
+        else value <= candidate.aggtrade_filter_threshold
+    )
+
+
+def _context_filter_allows_entry(
+    candidate: ActivityFirstCandidate,
+    index: int,
+    context_feature_series: dict[int, ContextMarketFeatureSeries] | None,
+) -> bool:
+    if candidate.context_filter_lookback is None:
+        return True
+    if (
+        candidate.context_filter_metric is None
+        or candidate.context_filter_operator not in {">=", "<="}
+        or candidate.context_filter_threshold is None
+        or context_feature_series is None
+    ):
+        return False
+    series = context_feature_series.get(candidate.context_filter_lookback)
+    if series is None:
+        return False
+    value = series.value_at(candidate.context_filter_metric, index)
+    if value is None:
+        return False
+    return (
+        value >= candidate.context_filter_threshold
+        if candidate.context_filter_operator == ">="
+        else value <= candidate.context_filter_threshold
+    )
+
+
 def _run_candidate_on_candles(
     candles: list[Candle],
     candidate: ActivityFirstCandidate,
@@ -550,6 +676,9 @@ def _run_candidate_on_candles(
     filters: ExchangeInfoFilters | None,
     market: _MarketMetrics | None = None,
     htf_feature_series: dict[str, DerivedTimeframeFeatureSeries] | None = None,
+    orderflow_feature_series: dict[int, KlineOrderflowFeatureSeries] | None = None,
+    aggtrade_feature_series: dict[int, AggTradeFeatureSeries] | None = None,
+    context_feature_series: dict[int, ContextMarketFeatureSeries] | None = None,
 ) -> ActivityFirstSimulationResult:
     trades: list[ActivityFirstTrade] = []
     signal_count = no_trade_count = blocked_signal_count = 0
@@ -566,6 +695,30 @@ def _run_candidate_on_candles(
             continue
         signal_count += 1
         if not _htf_filter_allows_entry(candidate, index, htf_feature_series):
+            feature_filtered_signal_count += 1
+            index += 1
+            continue
+        if not _orderflow_filter_allows_entry(
+            candidate,
+            index,
+            orderflow_feature_series,
+        ):
+            feature_filtered_signal_count += 1
+            index += 1
+            continue
+        if not _aggtrade_filter_allows_entry(
+            candidate,
+            index,
+            aggtrade_feature_series,
+        ):
+            feature_filtered_signal_count += 1
+            index += 1
+            continue
+        if not _context_filter_allows_entry(
+            candidate,
+            index,
+            context_feature_series,
+        ):
             feature_filtered_signal_count += 1
             index += 1
             continue
@@ -940,7 +1093,6 @@ def build_activity_first_router_report(run_id: str, split: TrainBlindSplit, stak
             "run_type": "unknown",
             "smoke_test_not_performance_proof": False,
             "live_release_allowed": False,
-            "legacy_cluster_router_used": False,
             "diagnostic_only": selected is None,
             "trade_allowed": selected is not None,
             "blindtest_strategy_executed": selected is not None,
