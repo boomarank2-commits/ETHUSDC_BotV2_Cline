@@ -154,29 +154,31 @@ ERH-v1 ist weiterhin research-only. Erst wenn Training/Walkforward besteht,
 darf der Runner genau einen eingefrorenen Blindtest ausfuehren. Keine UI- oder
 Router-Integration vor bestaetigter Evidenz.
 
-Stand nach lokalem ERH-v1-Run:
+Stand nach lokalem ERH-v1-Run nach Next-Open-Korrektur:
 
 - `strategy_version = erh_v1_htf_regime_research_20260701`
 - `status = no_training_walkforward_candidate`
 - 8 Varianten getestet
 - 0 Varianten eligible
 - 0 Blindtest-Kandidaten ausgewertet
-- Training-Regime-Diagnose:
-  - 4h-Trainingsbars: 4380
-  - aktive Score>=3-Regimebars: 334
-  - Score-Verteilung: 0=762, 1=1566, 2=1116, 3=494, 4=324, 5=118
-- Beste grobe Variante nach Verlust war `erh_score3_arm30_give30`, aber:
-  - 149 Validation-Trades
-  - ca. `-32.41 USDC`
-  - Profit Factor ca. `0.72`
-  - positive Folds: `1/6`
-  - robust/slippage/fold/monotonicity checks fehlgeschlagen
+- Wichtiger Bugfix: Signale auf geschlossenen 1h/4h-Kerzen werden nicht mehr
+  auf dem Open derselben bereits geschlossenen Kerze gehandelt. Entry entsteht
+  nur als Pending Entry und wird am naechsten 1h-Open ausgefuehrt.
+- Beste Variante nach PnL war trotzdem nur `erh_score4_arm30_give30`:
+  - 123 Validation-Trades
+  - ca. `-98.53 USDC`
+  - Profit Factor ca. `0.286`
+  - positive Folds: `0/6`
+  - Median Trade PnL ca. `-0.916 USDC`
+  - Max Drawdown > `100 USDC`
 
 Konsequenz:
 
 - kein UI-Full-Backtest fuer ERH-v1;
 - kein Blindtest, weil Training/Walkforward nicht bestanden wurde;
-- kein blindes Lockern von Score, Orderflow, Trail oder Stop.
+- kein blindes Lockern von Score, Orderflow, Trail oder Stop;
+- ERH-v1 ist archiviert, ausser ein zukuenftiger Agent findet einen neuen,
+  konkreten technischen Fehler. Reines Hysterese-/Gate-Tuning ist verboten.
 
 Wenn Arena.ai erneut gefragt wird, aktuellen Prompt verwenden:
 
@@ -184,19 +186,256 @@ Wenn Arena.ai erneut gefragt wird, aktuellen Prompt verwenden:
 docs/ARENA_AI_REQUEST_AFTER_ERH_V1_20260701.md
 ```
 
-## 7. Arena.ai Auftrag
+Arena.ai hat danach sinnvollerweise keinen neuen Strategieversuch empfohlen,
+sondern ERH-v1-DIAG:
+
+- `src/research/erh_v1_diagnostics.py`
+- `scripts/run_erh_v1_diagnostics.py`
+- `tests/test_erh_v1_diagnostics.py`
+
+Dieser Diagnose-Run darf keine Parameter aendern und keinen Blindtest starten.
+Er trennt:
+
+- Frequenzproblem
+- echter Edge-Fehlschlag
+- Implementierungs-/Gate-Definitionsfehler
+- Validierungs-/Fold-Mismatch
+
+Stand nach lokalem ERH-v1-DIAG:
+
+- `strategy_version = erh_v1_signal_funnel_diagnostic_20260701`
+- `status = diagnostic_complete`
+- `suspected_root_cause_category = B_genuine_edge_problem`
+- Empfehlung: ERH-v1 als wahrscheinlich nicht handelbaren Edge behandeln,
+  solange kein konkreter Implementierungsbug gefunden wird.
+
+Wichtige Zahlen:
+
+- Hard-Gate aktive 4h-Bars: 416
+- Hard-Gate Episoden: 178
+- Score>=3 aktive 4h-Bars: 334
+- Score>=3 Episoden: 146
+- Score>=4 aktive 4h-Bars: 248
+- Score>=4 Episoden: 119
+- Keine massive NaN-/Join-Anomalie in den Kernfeatures:
+  - ETH Trend Gate true rate ca. 50.3%
+  - ETHBTC Trend Gate true rate ca. 38.6%
+  - ETHBTC Slope Gate true rate ca. 41.7%
+  - Orderflow Gate true rate ca. 40.4%
+  - BTC not crash Gate true rate ca. 95.7%
+  - USDC/Basis fast immer true; das ist ein Sanity-Filter und kein Blocker.
+
+Unconditional-Regime-Return-Test nach Next-Open-Korrektur:
+
+- Score>=3:
+  - 146 Episoden
+  - total ca. `-72.80 USDC`
+  - Profit Factor ca. `0.442`
+  - Win Rate ca. `30.14%`
+  - Avg Return/Episode ca. `-0.499%`
+- Score>=4:
+  - 119 Episoden
+  - total ca. `-77.90 USDC`
+  - Profit Factor ca. `0.332`
+  - Win Rate ca. `29.41%`
+  - Avg Return/Episode ca. `-0.655%`
+- Buy-and-hold ueber denselben Full-Train-Zeitraum lag bei ca. `+28.99 USDC`.
+
+Interpretation:
+
+- ERH-v1 scheitert nicht daran, dass es keine Regime oder keine Trades gibt.
+- ERH-v1 scheitert auch nicht offensichtlich an einem NaN-/Join-Bug.
+- Die definierte Regime-Idee filtert im Training schlechter als einfaches
+  ETH-Halten und erzeugt nach Kosten keinen Edge.
+
+Konsequenz:
+
+- kein UI-Full-Backtest fuer ERH-v1;
+- kein ERH-v1-Exit-/Gate-Tuning;
+- ERH-v1 ist nicht der naechste Pfad.
+
+## 7. Aktueller Research-Schritt: ETH Edge Existence Scan
+
+Aus den zwei letzten Arena.ai-Antworten wurde der zweite Vorschlag gewaehlt:
+nicht weiter ERH-v1 retten, sondern direkt messen, ob vorhandene Features
+ueberhaupt nach Kosten positive Long-only Forward-Returns zeigen.
+
+Dateien:
+
+- `src/research/eth_edge_scan.py`
+- `scripts/run_eth_edge_existence_scan.py`
+- `tests/test_eth_edge_scan.py`
+
+Regeln des Scans:
+
+- training-only, kein Blindtest;
+- keine Strategie, keine Trades, keine UI-/Router-Integration;
+- jedes Feature wird in Quintile geteilt;
+- Forward-Horizonte: 1h, 4h, 12h, 24h, 72h;
+- Feature-Zeile `i` darf erst nach Close bekannt sein;
+- hypothetischer Entry: Zeile `i+1` Open;
+- Exit: `horizon` Stunden spaeter;
+- Kostenmodell: bestehendes Spot-Roundtrip-Modell, ca. `0.22%`;
+- Edge-Kandidat nur, wenn bestes Quintil nach Kosten positiv ist und in
+  mindestens 3 Folds stabil positiv bleibt.
+
+Lokaler Run:
+
+- `strategy_version = eth_edge_existence_scan_20260701`
+- `status = edge_candidate_found`
+- `edge_candidate_count = 24`
+- `reversion_candidate_count = 8`
+- `momentum_candidate_count = 15`
+- Output:
+  `reports/research/eth_edge_scan/eth_edge_existence_scan_report.json`
+
+Top-Trainingsbefunde:
+
+1. `btc_4h_drawdown_from_20d_high`, 72h, q4:
+   - BTC naeher am 20-Tage-Hoch / Risk-On
+   - Mean nach Kosten ca. `+1.426 USDC` pro 100 USDC Hypothesenhold
+   - positive Folds `5/6`
+   - Winrate ca. `57.4%`
+2. `btc_4h_close_vs_ema20`, 72h, q4:
+   - Mean nach Kosten ca. `+0.762 USDC`
+   - positive Folds `4/6`
+3. `ethbtc_4h_ret_6`, 72h, q0:
+   - ETHBTC war relativ schwach, Reversion-Kandidat
+   - Mean nach Kosten ca. `+0.722 USDC`
+   - positive Folds `5/6`
+4. `eth_4h_dist_to_20d_high`, 72h, q0:
+   - ETH weiter weg vom 20-Tage-Hoch, Dip-/Reversion-Kandidat
+   - Mean nach Kosten ca. `+0.604 USDC`
+   - positive Folds `4/5`
+
+Interpretation:
+
+- Bisherige bestaetigungsbasierte Momentum-/Leadership-Entries waren
+  wahrscheinlich zu spaet.
+- Die Daten deuten eher auf 24-72h Long-Holds in BTC-Risk-On-Phasen und/oder
+  ETH/ETHBTC-Dip-Reversion statt Chase-Momentum.
+- Der Scan beweist noch keine handelbare Strategie, aber er gibt den naechsten
+  sinnvollen research-only Pfad vor.
+
+Dieser Schritt wurde umgesetzt. Siehe BRH/ERV-v1 unten.
+
+## 8. Aktueller Research-Schritt: BRH/ERV-v1
+
+Aus dem Edge-Scan wurde genau eine research-only Hypothese gebaut, keine
+UI-/Router-Integration:
+
+```text
+ERV/BRH-v1:
+BTC-Risk-On ETH 72h Hold + ETHBTC/ETH-Dip-Reversion-Filter
+```
+
+Dateien:
+
+- `src/research/brh_v1.py`
+- `scripts/run_brh_v1_research.py`
+- `tests/test_brh_v1_research.py`
+
+Regeln:
+
+- nur Training/Walkforward fuer Auswahl verwenden;
+- fixed 72h Hold als Startpunkt aus dem Edge-Scan;
+- Quantile je Fold nur aus dem jeweiligen Trainingsteil kalibrieren;
+- Signale nur auf neuen geschlossenen 4h-Availability-Rows;
+- Entry erst am naechsten 1h-Open;
+- Exit nach 72h am 1h-Open;
+- Overlap/one-position-at-a-time strikt beachten;
+- Kostenmodell unveraendert lassen;
+- nur einen eingefrorenen Blindtest ausfuehren, wenn Training/Walkforward
+  robuste Kandidaten zeigt.
+
+Lokaler Run:
+
+- `strategy_version = brh_v1_btc_risk_on_eth_reversion_hold_20260701`
+- `status = blindtest_completed`
+- `eligible_variant_count = 5 / 7`
+- `blindtest_candidate_count_evaluated = 1`
+- Output:
+  `reports/research/brh_v1/brh_v1_research_report.json`
+
+Training/Walkforward:
+
+- 7 feste Varianten:
+  - BTC-Risk-On 72h
+  - Dual BTC-Risk-On 72h
+  - BTC-Risk-On + ETHBTC-Dip
+  - BTC-Risk-On + ETH-Dip
+  - BTC-Risk-On + Any-Dip
+  - BTC-Risk-On + Dual-Dip
+  - BTC-Risk-On + Orderflow-Cooldown
+- 5 Varianten eligible
+- alle 5 eligible Varianten hatten `6/6` positive Folds
+- Top nach Training-PnL:
+  - `brh_dual_btc_risk_on_72h`
+  - ca. `+142.26 USDC`
+  - ca. `+0.259 USDC/Tag`
+  - 52 Trades
+  - PF ca. `3.65`
+- Ausgewaehlt wurde training-only nach PF:
+  - `erv_risk_on_orderflow_cooldown_72h`
+  - ca. `+135.41 USDC`
+  - ca. `+0.246 USDC/Tag`
+  - 45 Trades
+  - PF ca. `3.95`
+
+Frozen Blindtest der ausgewaehlten Variante:
+
+- PnL gesamt: `+4.647 USDC`
+- USDC/Tag: `+0.0127`
+- Trades: `22`
+- PF: ca. `1.10`
+- Positive/negative Trades: `10 / 12`
+- Median Trade PnL: ca. `-0.373 USDC`
+- Max Drawdown: ca. `26.58 USDC`
+
+Interpretation:
+
+- BRH/ERV-v1 ist der erste neue Ansatz nach den negativen Spuren, der im
+  frozen Blindtest nicht direkt negativ war.
+- Trotzdem ist das Ergebnis weit vom Ziel `3 USDC/Tag` entfernt.
+- Der starke Training/Walkforward-Befund generalisiert im Blindtest nur sehr
+  schwach.
+- Das darf nicht durch Auswahlwechsel nach Blindtest, zweiten Blindtest oder
+  Gate-Lockerung "repariert" werden.
+
+Naechster kleinster sinnvoller Schritt:
+
+BRH/ERV-v1 diagnostizieren, nicht sofort neue Strategie bauen:
+
+```text
+BRH-v1-DIAG:
+Train-vs-Blind decay / regime-distribution shift / threshold stability
+```
+
+Zu pruefen:
+
+- Haben sich die BTC-Risk-On-Thresholds im Blindtest anders verteilt?
+- Waren Blindtest-Trades zu stark von wenigen Gewinnern abhaengig?
+- Sind 72h-Holds im Blindtest wegen anderer Volatilitaet/Trendstruktur
+  zerfallen?
+- Ist Orderflow-Cooldown als Auswahlkriterium stabil oder nur Training-PF-
+  Overfit?
+- Haette eine andere Auswahlregel vor Blindtest rationaler sein koennen?
+  Achtung: nicht nachtraeglich auf Blindtest optimieren, nur fuer eine neue
+  zukuenftige Hypothese dokumentieren.
+
+## 9. Arena.ai Auftrag
 
 Wenn externe Hilfe genutzt wird, verwende als aktuellen Prompt:
 
 ```text
-docs/ARENA_AI_REQUEST_AFTER_R2V3_PATH_GATE_20260701.md
+docs/ARENA_AI_REQUEST_AFTER_BRH_V1_20260701.md
 ```
 
 Die Antwort darf nicht blind eingebaut werden. Waehle den besseren Vorschlag,
 begruende warum, baue ihn minimal research-only, und stoppe wieder, wenn die
 Evidenz nicht reicht.
 
-## 8. Uebergabeformat nach jedem Patch
+## 10. Uebergabeformat nach jedem Patch
 
 Am Ende immer berichten:
 

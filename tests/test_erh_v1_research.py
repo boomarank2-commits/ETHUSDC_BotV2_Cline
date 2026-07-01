@@ -125,9 +125,10 @@ def test_simulate_erh_variant_enters_next_hour_and_hits_hard_stop() -> None:
     )
 
     assert len(trades) == 1
-    assert trades[0].entry_time == index[0].isoformat()
+    assert trades[0].entry_time == index[1].isoformat()
+    assert trades[0].entry_price == 100.5
     assert trades[0].exit_reason == "hard_stop"
-    assert math.isclose(trades[0].exit_price, 94.0)
+    assert math.isclose(trades[0].exit_price, 94.47)
     assert trades[0].net_pnl_usdc < -6.0
 
 
@@ -174,5 +175,6 @@ def test_simulate_erh_variant_exits_on_regime_break_next_open() -> None:
     )
 
     assert len(trades) == 1
+    assert trades[0].entry_time == index[1].isoformat()
     assert trades[0].exit_time == index[2].isoformat()
     assert trades[0].exit_reason == "regime_end"

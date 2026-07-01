@@ -52,17 +52,90 @@ Die zuletzt untersuchten Research-Spuren sind bewusst nicht integriert:
 - ECMD-L v1: kein robuster Walkforward-Kandidat, nicht integrieren.
 - EPX-L / R2-v2 / R2-v3: Tradeability/Path-Lift vorhanden, aber keine
   robuste Execution; `R2-v3` endete mit `no_path_gate_candidate`.
-- ERH-v1: neuer Research-only HTF-Regime-Pivot wurde umgesetzt und lokal
-  ausgefuehrt. Ergebnis: `no_training_walkforward_candidate`, 0/8 Varianten
-  eligible, 0 Blindtest-Kandidaten.
+- ERH-v1: Research-only HTF-Regime-Pivot wurde umgesetzt, danach wurde ein
+  Next-Open-Ausfuehrungsfehler korrigiert. Signale auf geschlossenen 1h/4h
+  Kerzen duerfen jetzt nur noch am naechsten 1h-Open handeln. Ergebnis nach
+  erneutem Run: `no_training_walkforward_candidate`, 0/8 Varianten eligible,
+  0 Blindtest-Kandidaten. ERH-v1 ist archiviert.
+- ETH Edge Existence Scan: neuer training-only Scan wurde umgesetzt und lokal
+  ausgefuehrt. Ergebnis: `edge_candidate_found`. Es gibt Trainingsstruktur
+  ueber 24-72h, besonders BTC-Risk-On und einige Reversion-/Dip-Quintile.
+  Das ist noch keine Strategie und noch kein UI-Backtest-Signal.
+- BRH/ERV-v1: aus dem Edge-Scan wurde eine echte research-only
+  Walkforward-Hypothese gebaut:
+  BTC-Risk-On ETH 72h Hold plus optionale ETHBTC/ETH/Orderflow-Reversion.
+  Ergebnis: Training/Walkforward fand 5/7 eligible Varianten und erlaubte
+  genau einen frozen Blindtest. Der Blindtest war leicht positiv, aber weit
+  vom Ziel entfernt: `+4.65 USDC` gesamt, `+0.013 USDC/Tag`, 22 Trades.
+  BRH/ERV-v1 ist deshalb nicht uebernahmefaehig und nicht UI-ready.
 
 Konsequenz:
 
 - keinen neuen UI-Full-Backtest nur fuer diese toten Spuren starten;
 - R2-v2/R2-v3 nicht weiter ueber TP/SL/Hold/Gates erzwingen;
-- naechster sinnvoller Schritt ist nicht UI-Backtest, sondern ERH-v1-Befund
-  analysieren oder Arena.ai mit `docs/ARENA_AI_REQUEST_AFTER_ERH_V1_20260701.md`
-  fragen. Kein ERH-v1-Gate-Tuning nur, damit ein Kandidat durchkommt.
+- ERH-v1 nicht weiter ueber Gate-/Exit-/Hold-Tuning retten. Nach
+  Next-Open-Korrektur ist der Befund klar negativ.
+- naechster sinnvoller Schritt ist nicht UI-Full-Backtest, sondern BRH/ERV-v1
+  diagnostizieren: Warum waren Walkforward-Folds stark, aber der frozen
+  Blindtest nur schwach positiv? Keine weitere Blindtest-Optimierung.
+
+Aktueller Edge-Scan-Befund:
+
+- Dateien:
+  - `src/research/eth_edge_scan.py`
+  - `scripts/run_eth_edge_existence_scan.py`
+  - `tests/test_eth_edge_scan.py`
+- `strategy_version = eth_edge_existence_scan_20260701`
+- `status = edge_candidate_found`
+- `edge_candidate_count = 24`
+- `reversion_candidate_count = 8`
+- `momentum_candidate_count = 15`
+- wichtigster Trainingskandidat:
+  - Feature: `btc_4h_drawdown_from_20d_high`
+  - Horizont: `72h`
+  - bestes Quintil: `q4` = BTC naeher am 20-Tage-Hoch / Risk-On
+  - Mean nach Kosten: ca. `+1.426 USDC` je 100-USDC-Hypothesenhold
+  - positive Folds: `5/6`
+  - Winrate: ca. `57.4%`
+- wichtige Reversion-Kandidaten:
+  - `ethbtc_4h_ret_6`, 72h, q0: ca. `+0.722 USDC`, `5/6` Folds
+  - `eth_4h_dist_to_20d_high`, 72h, q0: ca. `+0.604 USDC`, `4/5` Folds
+  - Orderflow-Schwachequintile, 72h, q1: ca. `+0.467 USDC`, `4/6` Folds
+
+Interpretation: Die bisherigen Momentum-/Leadership-Bestaetigungsstrategien
+waren wahrscheinlich zu spaet. Die Daten zeigen eher: ETH ist long-only
+interessanter, wenn der BTC-Kontext stabil/risk-on ist und ETH/ETHBTC nicht
+bereits aggressiv gechased wird. Das ist nur Trainingsevidenz, kein Freifahrtschein.
+
+Aktueller BRH/ERV-v1-Befund:
+
+- Dateien:
+  - `src/research/brh_v1.py`
+  - `scripts/run_brh_v1_research.py`
+  - `tests/test_brh_v1_research.py`
+- `strategy_version = brh_v1_btc_risk_on_eth_reversion_hold_20260701`
+- `status = blindtest_completed`
+- Training/Walkforward:
+  - 7 feste Varianten
+  - 5 Varianten eligible
+  - alle eligible Varianten hatten 6/6 positive Folds
+  - beste Training-PnL-Variante: `brh_dual_btc_risk_on_72h`
+    mit ca. `+142.26 USDC`
+  - selektiert wurde nach Training-PF:
+    `erv_risk_on_orderflow_cooldown_72h`
+    mit ca. `+135.41 USDC`, PF ca. `3.95`
+- Frozen Blindtest der selektierten Variante:
+  - `+4.65 USDC` gesamt
+  - `+0.013 USDC/Tag`
+  - 22 Trades
+  - Profit Factor ca. `1.10`
+  - Median Trade PnL ca. `-0.37 USDC`
+  - Max Drawdown ca. `26.58 USDC`
+
+Interpretation: BRH/ERV-v1 beweist, dass der Edge-Scan nicht komplett leer war.
+Aber die Trainingsstaerke generalisiert zu schwach. Das darf nicht durch
+Auswahlwechsel nach Blindtest, Gate-Lockerung oder zweiten Blindtest
+"repariert" werden.
 
 ## Datenwahrheit
 

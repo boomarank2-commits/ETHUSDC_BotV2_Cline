@@ -421,10 +421,11 @@ def simulate_erh_variant(
 ) -> list[ErhTrade]:
     """Simulate one ERH-v1 variant on a time interval.
 
-    Entries are evaluated at 1h open times using only features from already
-    closed 1h/4h bars. The current bar's low may trigger the hard stop after
-    entry. Regime/trailing/time exits execute at the open of the current 1h bar
-    based on information from previously closed bars.
+    Signals are evaluated only after the 1h bar is closed. A valid signal
+    therefore creates a pending entry that executes at the next available 1h
+    open. The entry bar's low may trigger the hard stop after entry.
+    Regime/trailing/time exits execute at the next 1h open based on
+    information from previously closed bars.
     """
     window = execution.loc[(execution.index >= start) & (execution.index <= end)].copy()
     if window.empty:
@@ -439,12 +440,14 @@ def simulate_erh_variant(
     mae_ret = 0.0
     scheduled_exit_reason: str | None = None
     entry_metadata: dict[str, Any] = {}
+    pending_entry_metadata: dict[str, Any] | None = None
 
     for timestamp, row in window.iterrows():
         current_open = float(row["open"])
         current_high = float(row["high"])
         current_low = float(row["low"])
         current_close = float(row["close"])
+        exited_at_open = False
 
         if in_position and scheduled_exit_reason is not None:
             net_ret, cost_ret = _net_return(
@@ -480,6 +483,23 @@ def simulate_erh_variant(
             )
             in_position = False
             scheduled_exit_reason = None
+            exited_at_open = True
+
+        if (
+            not in_position
+            and pending_entry_metadata is not None
+            and not exited_at_open
+        ):
+            in_position = True
+            entry_time = timestamp
+            entry_price = current_open
+            stop_price = entry_price * (1.0 - config.hard_sl)
+            highest_close = current_close
+            mfe_ret = max(0.0, current_high / entry_price - 1.0)
+            mae_ret = min(0.0, current_low / entry_price - 1.0)
+            scheduled_exit_reason = None
+            entry_metadata = pending_entry_metadata
+            pending_entry_metadata = None
 
         if in_position:
             mfe_ret = max(mfe_ret, current_high / entry_price - 1.0)
@@ -538,22 +558,14 @@ def simulate_erh_variant(
             elif hold_hours >= config.max_hold_hours and mfe_ret < 0.02:
                 scheduled_exit_reason = "time_stop"
 
-        if not in_position:
+        if not in_position and pending_entry_metadata is None:
             active = (
                 bool(row["hard_gate_pass"])
                 and int(row["regime_score"]) >= variant.regime_score_min
             )
             trigger = bool(row["entry_trigger_base"]) and not bool(row["no_chase_block"])
             if active and trigger:
-                in_position = True
-                entry_time = timestamp
-                entry_price = current_open
-                stop_price = entry_price * (1.0 - config.hard_sl)
-                highest_close = current_close
-                mfe_ret = max(0.0, current_high / entry_price - 1.0)
-                mae_ret = min(0.0, current_low / entry_price - 1.0)
-                scheduled_exit_reason = None
-                entry_metadata = {
+                pending_entry_metadata = {
                     "regime_score": int(row["regime_score"]),
                     "ethbtc_4h_close_vs_ema20": float(
                         row["ethbtc_4h_close_vs_ema20"]

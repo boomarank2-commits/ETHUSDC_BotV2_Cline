@@ -17,14 +17,23 @@ Aktueller Schwerpunkt:
 1. Keine alten Research-Spuren weiter erzwingen:
    Attempt 053, ERRO-L v1, ECMD-L v1 und EPX-L/R2-v2/R2-v3 sind nicht
    integrationsfaehig.
-2. Eine neue ETH-spezifische Hypothese research-only pruefen, bevorzugt:
-   1h/4h-Regime-Pivot, neue Struktur-Reversal-Familie, laengerer
-   Kontextmarkt-Leadership-Ansatz oder Orderflow-Konfirmation.
-3. Training/Walkforward muss zuerst Ziel-vor-Stop, Kostenrobustheit,
+2. ERH-v1 nicht weiter retten. Nach Next-Open-Korrektur ist ERH-v1 klar
+   negativ und archiviert.
+3. ETH Edge Existence Scan ist der aktuelle Arbeitsanker:
+   `eth_edge_existence_scan_20260701` fand Trainingsstruktur ueber 24-72h.
+   Top-Befund ist BTC-Risk-On (`btc_4h_drawdown_from_20d_high` q4, 72h),
+   plus ETHBTC/ETH-Dip-Reversion-Quintile.
+4. `ERV/BRH-v1 = BTC-Risk-On ETH 72h Hold + ETHBTC/ETH-Dip-Reversion-Filter`
+   wurde research-only gebaut. Training/Walkforward war stark, aber der frozen
+   Blindtest nur schwach positiv: ca. `+0.013 USDC/Tag`.
+5. Naechster Schritt ist BRH-v1-DIAG: Train-vs-Blind decay,
+   Regime-Distribution-Shift und Threshold-Stabilitaet analysieren. Kein
+   zweiter Blindtest und kein Auswahlwechsel auf Basis des Blindtests.
+6. Training/Walkforward muss zuerst Ziel-vor-Stop, Kostenrobustheit,
    Fold-Stabilitaet und genug Trades zeigen.
-4. Erst danach darf eine minimale Integration in den gemeinsamen
+7. Erst danach darf eine minimale Integration in den gemeinsamen
    `activity_first_router` vorbereitet werden.
-5. Danach erst UI-Full-Backtest.
+8. Danach erst UI-Full-Backtest.
 
 Keine Datenquelle und keine Strategie wird routerwirksam, nur weil sie
 heruntergeladen oder als Idee formuliert wurde.
@@ -64,11 +73,17 @@ Implemented:
 - ETHUSDC 1m base features
 - lookahead-safe derived timeframes 5m, 15m, 30m, 1h, 4h, 1d
 - HTF training edge diagnostics for winner/loser separation
+- research-only ETH Edge Existence Scan ueber vorhandene ETH/BTC/Orderflow/
+  Basis-Features und Forward-Horizonte 1h/4h/12h/24h/72h
+- research-only BRH/ERV-v1 Walkforward mit 72h fixed hold, foldweise
+  kalibrierten Quantilen, Next-Open Entry und one-position-at-a-time
 
 Next:
 
-- Add feature adapters one source at a time only after the current full report proves availability and quality.
-- Candidate sources: kline order-flow fields, aggTrade minute features, ETHUSDT/USDCUSDT context, BTCUSDC/ETHBTC context.
+- BRH-v1-DIAG bauen: erklaeren, warum 5/7 Varianten im Walkforward eligible
+  waren, der eingefrorene Blindtest aber nur schwach positiv war.
+- Keine UI/Router-Integration von BRH-v1, solange die Generalisierung nicht
+  deutlich naeher an das Ziel kommt.
 - Spread/depth only after at least 30 real days of validated local collection.
 
 ## Phase 4 - Training Layer
