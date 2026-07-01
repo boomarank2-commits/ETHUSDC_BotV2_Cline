@@ -14,11 +14,18 @@ from src.data.kline_orderflow_features import (
 from src.data.candle_schema import Candle
 from src.data.train_blind_split import TrainBlindSplit
 from src.router import (
+    _aggregate_pool_result,
     _filter_learning_eligible,
     _learn_aggtrade_filter_candidates,
     _learn_context_market_filter_candidates,
     _learn_htf_filter_candidates,
     _learn_orderflow_filter_candidates,
+    _long_only_oracle_summary,
+    _temporal_validation_stability_rejection,
+    _temporal_validation_stability_report,
+    _walkforward_all_positive_candidate,
+    _walkforward_pool_order_key,
+    _walkforward_stability_policy_rejection,
 )
 from src.data.context_market_features import build_closed_context_market_feature_store
 from src.router.activity_first_router_report import (
@@ -157,7 +164,7 @@ def test_eth_specific_regime_diagnostics_are_reported() -> None:
 
     assert report.router_artifact["eth_specific_strategy_scope"] is True
     assert report.router_artifact["candidate_generation_version"] == (
-        "activity_first_v14_conservative_regime_pool"
+        "activity_first_v20_all_positive_walkforward_pool"
     )
     assert report.router_artifact["base_candidate_generation_version"] == (
         "activity_first_v11_eth_regime_expanded"
@@ -170,7 +177,65 @@ def test_eth_specific_regime_diagnostics_are_reported() -> None:
     ] is True
     assert report.router_artifact["selection_validation"]["pool_selection"][
         "pool_selection_version"
-    ] == "activity_first_v14_conservative_regime_pool"
+    ] == "activity_first_v20_all_positive_walkforward_pool"
+    assert report.router_artifact["selection_validation"]["pool_selection"][
+        "walkforward_stability_pool_selection_used"
+    ] is True
+    assert report.router_artifact["selection_validation"]["pool_selection"][
+        "walkforward_stability_blindtest_learning"
+    ] is False
+    assert report.router_artifact["selection_validation"][
+        "validation_pool_temporal_stability"
+    ]["guard_used"] is True
+    assert report.router_artifact["target_feasibility_audit"][
+        "audit_version"
+    ] == "target_feasibility_v16_long_only_oracle"
+    assert report.router_artifact["target_feasibility_audit"][
+        "changes_trade_selection"
+    ] is False
+    assert report.rejection_summary["target_feasibility_audit"][
+        "scope"
+    ] == "diagnostic_only_no_trade_decision"
+    assert report.router_artifact["walkforward_regime_research_version"] == (
+        "walkforward_regime_research_v17_training_only"
+    )
+    assert report.router_artifact[
+        "walkforward_regime_research_used_for_trade_decision"
+    ] is True
+    assert report.router_artifact[
+        "walkforward_stability_pool_selection_version"
+    ] == "activity_first_v20_all_positive_walkforward_pool"
+    assert report.router_artifact[
+        "walkforward_stability_used_for_pool_selection"
+    ] is True
+    walkforward_research = report.router_artifact["walkforward_regime_research"]
+    assert walkforward_research["scope"] == (
+        "training_only_pool_selection_input_plus_diagnostics"
+    )
+    assert walkforward_research["uses_blindtest"] is False
+    assert walkforward_research["uses_blindtest_for_learning"] is False
+    assert walkforward_research["changes_trade_selection"] is True
+    assert walkforward_research["changes_gates"] is False
+    assert walkforward_research["used_for_pool_selection"] is True
+    assert walkforward_research["candidate_count"] >= report.setup_test_count
+    assert report.rejection_summary[
+        "walkforward_regime_research_used_for_trade_decision"
+    ] is True
+    assert report.router_artifact["selection_validation"]["pool_selection"][
+        "walkforward_stability_policy"
+    ] == "stable_only_when_stable_candidates_available"
+    assert report.router_artifact["selection_validation"]["pool_selection"][
+        "walkforward_stability_required_label"
+    ] == "training_stable_positive"
+    assert report.router_artifact["selection_validation"]["pool_selection"][
+        "walkforward_all_positive_policy"
+    ] == "all_positive_folds_when_all_positive_candidates_available"
+    assert (
+        "rejected_by_walkforward_all_positive_policy"
+        in report.router_artifact["selection_validation"]["pool_selection"][
+            "rejection_counts"
+        ]
+    )
     assert report.rejection_summary["selection_validation"][
         "learning_scope"
     ] == "selection_train_only"
@@ -743,3 +808,525 @@ def test_training_only_context_filter_is_learned_from_eth_candidate_winners(
     assert learned[0].context_filter_operator == ">="
     assert rules[0]["training_winner_pass_rate"] > rules[0]["training_loser_pass_rate"]
     assert rules[0]["frozen_before_blindtest"] is True
+
+
+def test_pool_aggregation_uses_one_shared_account_and_skips_overlaps(
+    monkeypatch,
+) -> None:
+    candles = [_flat_candle(index) for index in range(60)]
+    high_score_candidate = ActivityFirstCandidate(
+        "candidate_high_score",
+        "eth_test_family",
+        5,
+        0.01,
+        0.02,
+        0.01,
+        30,
+        1,
+        100.0,
+        "test",
+    )
+    low_score_candidate = ActivityFirstCandidate(
+        "candidate_low_score",
+        "eth_test_family",
+        5,
+        0.01,
+        0.02,
+        0.01,
+        30,
+        1,
+        100.0,
+        "test",
+    )
+    high_score_trade = ActivityFirstTrade(
+        "2026-01-01T00:10:00Z",
+        "2026-01-01T00:30:00Z",
+        100.0,
+        105.0,
+        100.0,
+        1.0,
+        5.0,
+        0.0,
+        5.0,
+        5.0,
+        "test",
+        high_score_candidate.family,
+        high_score_candidate.candidate_id,
+    )
+    overlapping_trade = ActivityFirstTrade(
+        "2026-01-01T00:10:00Z",
+        "2026-01-01T00:20:00Z",
+        100.0,
+        111.0,
+        100.0,
+        1.0,
+        11.0,
+        0.0,
+        11.0,
+        11.0,
+        "test",
+        low_score_candidate.family,
+        low_score_candidate.candidate_id,
+    )
+
+    def _result_for(candidate: ActivityFirstCandidate, trade: ActivityFirstTrade):
+        return ActivityFirstSimulationResult(
+            candidate,
+            100.0,
+            100.0 + trade.net_pnl,
+            trade.gross_pnl,
+            trade.fees_paid,
+            trade.net_pnl,
+            trade.net_pnl,
+            1,
+            1.0,
+            1 if trade.net_pnl > 0 else 0,
+            1 if trade.net_pnl < 0 else 0,
+            1 if trade.net_pnl == 0 else 0,
+            0.0,
+            1,
+            0,
+            0,
+            [trade],
+        )
+
+    results_by_candidate_id = {
+        high_score_candidate.candidate_id: _result_for(
+            high_score_candidate,
+            high_score_trade,
+        ),
+        low_score_candidate.candidate_id: _result_for(
+            low_score_candidate,
+            overlapping_trade,
+        ),
+    }
+
+    def _fake_run_candidate_on_candles(
+        _candles,
+        candidate,
+        _start_capital,
+        _filters,
+        _market,
+        _feature_series=None,
+        _orderflow_feature_series=None,
+        _aggtrade_feature_series=None,
+        _context_feature_series=None,
+    ):
+        return results_by_candidate_id[candidate.candidate_id]
+
+    monkeypatch.setattr(
+        router_report_module,
+        "_run_candidate_on_candles",
+        _fake_run_candidate_on_candles,
+    )
+    selected_pool = [
+        _TrainingEvaluation(
+            high_score_candidate,
+            results_by_candidate_id[high_score_candidate.candidate_id],
+            "medium_activity",
+            True,
+            None,
+            2.0,
+            0.0,
+        ),
+        _TrainingEvaluation(
+            low_score_candidate,
+            results_by_candidate_id[low_score_candidate.candidate_id],
+            "medium_activity",
+            True,
+            None,
+            1.0,
+            0.0,
+        ),
+    ]
+
+    result = _aggregate_pool_result(candles, selected_pool, 100.0, None)
+
+    assert result.signal_count == 2
+    assert result.trade_count == 1
+    assert result.no_trade_count == 1
+    assert result.total_net_pnl == 5.0
+    assert result.final_capital_reference == 105.0
+    assert result.trades == [high_score_trade]
+
+
+def test_temporal_validation_guard_rejects_material_negative_segment() -> None:
+    candidate = ActivityFirstCandidate(
+        "candidate_temporal_instability",
+        "eth_test_family",
+        5,
+        0.01,
+        0.02,
+        0.01,
+        30,
+        1,
+        100.0,
+        "test",
+    )
+    candles = [_flat_candle(index) for index in range(3 * 1440)]
+    trades = [
+        ActivityFirstTrade(
+            candles[10].open_time,
+            candles[10].open_time,
+            100.0,
+            105.0,
+            100.0,
+            1.0,
+            5.0,
+            0.0,
+            5.0,
+            5.0,
+            "test",
+            candidate.family,
+            candidate.candidate_id,
+        ),
+        ActivityFirstTrade(
+            candles[1450].open_time,
+            candles[1450].open_time,
+            100.0,
+            99.0,
+            100.0,
+            1.0,
+            -1.0,
+            0.0,
+            -1.0,
+            -1.0,
+            "test",
+            candidate.family,
+            candidate.candidate_id,
+        ),
+        ActivityFirstTrade(
+            candles[1460].open_time,
+            candles[1460].open_time,
+            100.0,
+            99.0,
+            100.0,
+            1.0,
+            -1.0,
+            0.0,
+            -1.0,
+            -1.0,
+            "test",
+            candidate.family,
+            candidate.candidate_id,
+        ),
+        ActivityFirstTrade(
+            candles[1470].open_time,
+            candles[1470].open_time,
+            100.0,
+            99.0,
+            100.0,
+            1.0,
+            -1.0,
+            0.0,
+            -1.0,
+            -1.0,
+            "test",
+            candidate.family,
+            candidate.candidate_id,
+        ),
+        ActivityFirstTrade(
+            candles[2890].open_time,
+            candles[2890].open_time,
+            100.0,
+            104.0,
+            100.0,
+            1.0,
+            4.0,
+            0.0,
+            4.0,
+            4.0,
+            "test",
+            candidate.family,
+            candidate.candidate_id,
+        ),
+    ]
+    result = ActivityFirstSimulationResult(
+        candidate,
+        100.0,
+        106.0,
+        6.0,
+        0.0,
+        6.0,
+        2.0,
+        len(trades),
+        1.67,
+        2,
+        3,
+        0,
+        3.0,
+        len(trades),
+        0,
+        0,
+        trades,
+    )
+
+    report = _temporal_validation_stability_report(
+        result,
+        candles,
+        segment_days=1,
+    )
+
+    assert result.total_net_pnl > 0
+    assert report["evaluated"] is True
+    assert report["segment_count"] == 3
+    assert report["negative_material_segment_count"] == 1
+    assert report["rejection_reason"] == (
+        "rejected_by_temporal_validation_stability"
+    )
+    assert _temporal_validation_stability_rejection(
+        result,
+        candles,
+        segment_days=1,
+    ) == "rejected_by_temporal_validation_stability"
+
+
+def test_target_feasibility_oracle_is_diagnostic_only() -> None:
+    candles = [
+        Candle(
+            "2026-01-01T00:00:00Z",
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            1.0,
+        ),
+        Candle(
+            "2026-01-01T00:01:00Z",
+            100.0,
+            105.0,
+            100.0,
+            104.0,
+            1.0,
+        ),
+        Candle(
+            "2026-01-02T00:00:00Z",
+            104.0,
+            104.0,
+            104.0,
+            104.0,
+            1.0,
+        ),
+        Candle(
+            "2026-01-02T00:01:00Z",
+            104.0,
+            106.0,
+            104.0,
+            105.0,
+            1.0,
+        ),
+    ]
+
+    summary = _long_only_oracle_summary(
+        candles,
+        stake_quote_amount=100.0,
+        target_quote_per_day=3.0,
+    )
+
+    assert summary["tradeable"] is False
+    assert summary["uses_future_high_inside_day"] is True
+    assert summary["day_count"] == 2
+    assert summary["positive_day_count"] == 2
+    assert summary["quote_per_day"] > 0
+    assert summary["required_capture_of_oracle_for_target"] is not None
+
+
+def test_walkforward_stability_pool_key_prefers_stable_candidate() -> None:
+    def evaluation(candidate_id: str, quote_per_day: float) -> _TrainingEvaluation:
+        candidate = ActivityFirstCandidate(
+            candidate_id,
+            "eth_continuation_after_impulse_entry",
+            30,
+            0.0085,
+            0.04,
+            0.016,
+            1440,
+            1,
+            100.0,
+            "eth_regime_expanded",
+        )
+        result = ActivityFirstSimulationResult(
+            candidate,
+            100.0,
+            100.0 + quote_per_day,
+            quote_per_day,
+            0.0,
+            quote_per_day,
+            quote_per_day,
+            10,
+            0.5,
+            6,
+            4,
+            0,
+            2.0,
+            10,
+            0,
+            0,
+            [],
+        )
+        return _TrainingEvaluation(
+            candidate,
+            result,
+            "active",
+            True,
+            None,
+            quote_per_day,
+            abs(3.0 - quote_per_day),
+        )
+
+    stable = evaluation("stable_candidate", 0.10)
+    mixed = evaluation("mixed_candidate", 0.90)
+    stability_by_id = {
+        "stable_candidate": {
+            "stability_label": "training_stable_positive",
+            "negative_material_fold_count": 0,
+            "positive_active_fold_rate": 1.0,
+            "active_fold_count": 9,
+            "quote_per_day": 0.10,
+        },
+        "mixed_candidate": {
+            "stability_label": "training_mixed_positive",
+            "negative_material_fold_count": 2,
+            "positive_active_fold_rate": 0.78,
+            "active_fold_count": 9,
+            "quote_per_day": 0.90,
+        },
+    }
+
+    assert _walkforward_pool_order_key(stable, stability_by_id) > (
+        _walkforward_pool_order_key(mixed, stability_by_id)
+    )
+
+
+def test_walkforward_stability_policy_rejects_mixed_when_stable_exists() -> None:
+    candidate = ActivityFirstCandidate(
+        "mixed_candidate",
+        "eth_bounce_after_flush_entry",
+        120,
+        0.011,
+        0.055,
+        0.022,
+        2160,
+        1,
+        100.0,
+        "eth_regime_expanded_context_market_filter",
+    )
+    result = ActivityFirstSimulationResult(
+        candidate,
+        100.0,
+        110.0,
+        12.0,
+        2.0,
+        10.0,
+        0.10,
+        20,
+        0.2,
+        10,
+        10,
+        0,
+        5.0,
+        20,
+        0,
+        0,
+        [],
+    )
+    evaluation = _TrainingEvaluation(
+        candidate,
+        result,
+        "active",
+        True,
+        None,
+        0.10,
+        2.90,
+    )
+    stability_by_id = {
+        "mixed_candidate": {
+            "stability_label": "training_mixed_positive",
+            "negative_material_fold_count": 2,
+            "positive_active_fold_rate": 0.78,
+            "active_fold_count": 9,
+            "quote_per_day": 0.10,
+        }
+    }
+
+    assert _walkforward_stability_policy_rejection(
+        evaluation,
+        stability_by_id,
+        stable_candidates_available=True,
+    ) == "rejected_by_walkforward_stability_policy"
+    assert _walkforward_stability_policy_rejection(
+        evaluation,
+        stability_by_id,
+        stable_candidates_available=False,
+    ) is None
+
+
+def test_walkforward_all_positive_policy_rejects_stable_with_negative_fold() -> None:
+    candidate = ActivityFirstCandidate(
+        "stable_with_negative_fold",
+        "eth_continuation_after_impulse_entry",
+        120,
+        0.011,
+        0.055,
+        0.022,
+        2160,
+        1,
+        100.0,
+        "eth_regime_expanded_htf_filter",
+    )
+    result = ActivityFirstSimulationResult(
+        candidate,
+        100.0,
+        110.0,
+        12.0,
+        2.0,
+        10.0,
+        0.10,
+        20,
+        0.2,
+        10,
+        10,
+        0,
+        5.0,
+        20,
+        0,
+        0,
+        [],
+    )
+    evaluation = _TrainingEvaluation(
+        candidate,
+        result,
+        "active",
+        True,
+        None,
+        0.10,
+        2.90,
+    )
+    stability_by_id = {
+        "stable_with_negative_fold": {
+            "stability_label": "training_stable_positive",
+            "negative_material_fold_count": 0,
+            "positive_active_fold_count": 8,
+            "positive_active_fold_rate": 0.8888888888888888,
+            "active_fold_count": 9,
+            "worst_fold_net_pnl": -1.0,
+            "quote_per_day": 0.10,
+        }
+    }
+    all_positive_row = {
+        "stability_label": "training_stable_positive",
+        "negative_material_fold_count": 0,
+        "positive_active_fold_count": 9,
+        "positive_active_fold_rate": 1.0,
+        "active_fold_count": 9,
+        "worst_fold_net_pnl": 1.0,
+        "quote_per_day": 0.10,
+    }
+
+    assert _walkforward_all_positive_candidate(all_positive_row) is True
+    assert _walkforward_stability_policy_rejection(
+        evaluation,
+        stability_by_id,
+        stable_candidates_available=True,
+        all_positive_candidates_available=True,
+    ) == "rejected_by_walkforward_all_positive_policy"

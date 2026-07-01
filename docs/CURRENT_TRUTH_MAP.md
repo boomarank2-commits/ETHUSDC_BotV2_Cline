@@ -2,6 +2,9 @@
 
 Die verbindliche einzige Arbeitswahrheit ist [README.md](../README.md).
 
-Diese Datei existiert nur für alte Links und leitet Agenten dorthin weiter.
-Specs, ältere Docs und Memory-Dateien sind nachrangiger Hintergrund und dürfen
-keine abweichende Engine, Datenregel oder Strategiepflicht begründen.
+Der aktuelle operative Fortsetzungsleitfaden ist
+[GPT_CONTINUATION_GUIDE_20260701.md](GPT_CONTINUATION_GUIDE_20260701.md).
+
+Diese Datei existiert nur fuer alte Links und leitet Agenten dorthin weiter.
+Specs, aeltere Docs und Memory-Dateien sind nachrangiger Hintergrund und
+duerfen keine abweichende Engine, Datenregel oder Strategiepflicht begruenden.

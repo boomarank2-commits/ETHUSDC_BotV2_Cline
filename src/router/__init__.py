@@ -29,6 +29,24 @@ from src.data.kline_orderflow_features import (
 
 from . import activity_first_router_report as _r
 
+TEMPORAL_VALIDATION_SEGMENT_DAYS = 60
+TEMPORAL_VALIDATION_MIN_SEGMENTS = 3
+TEMPORAL_VALIDATION_MIN_ACTIVE_SEGMENTS = 2
+TEMPORAL_VALIDATION_MIN_SEGMENT_TRADES = 3
+TEMPORAL_VALIDATION_MIN_POSITIVE_ACTIVE_SEGMENT_RATE = 0.80
+TARGET_FEASIBILITY_AUDIT_VERSION = "target_feasibility_v16_long_only_oracle"
+WALKFORWARD_REGIME_RESEARCH_VERSION = "walkforward_regime_research_v17_training_only"
+WALKFORWARD_STABILITY_POOL_SELECTION_VERSION = (
+    "activity_first_v20_all_positive_walkforward_pool"
+)
+WALKFORWARD_STABILITY_REQUIRED_LABEL = "training_stable_positive"
+WALKFORWARD_STABILITY_POLICY = "stable_only_when_stable_candidates_available"
+WALKFORWARD_ALL_POSITIVE_POLICY = (
+    "all_positive_folds_when_all_positive_candidates_available"
+)
+WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS = 3
+WALKFORWARD_REGIME_FOLD_DAYS = 90
+
 
 def _ceil(value):
     whole = int(value)
@@ -124,6 +142,712 @@ def _score(result):
     if _is_eth(result) and result.trades_per_day < 1.0:
         score -= 0.20 + (1.0 - result.trades_per_day) * 0.10
     return score
+
+
+def _net_pnl_for_long_return(
+    stake_quote_amount,
+    gross_return,
+    fee_bps=None,
+):
+    fee_rate = (fee_bps if fee_bps is not None else _r.FEE_BPS) / 10_000
+    exit_ratio = 1.0 + gross_return
+    gross_pnl = stake_quote_amount * gross_return
+    fees = stake_quote_amount * fee_rate * (1.0 + exit_ratio)
+    return gross_pnl - fees
+
+
+def _calendar_day_groups(candles):
+    groups = []
+    current_day = None
+    current = []
+    for candle in candles:
+        day = candle.open_time[:10]
+        if current_day is None:
+            current_day = day
+        if day != current_day:
+            groups.append((current_day, current))
+            current_day = day
+            current = []
+        current.append(candle)
+    if current_day is not None and current:
+        groups.append((current_day, current))
+    return groups
+
+
+def _perfect_single_long_day_pnl(day_candles, stake_quote_amount):
+    """Diagnostic-only same-day long oracle; not a tradeable strategy."""
+    if len(day_candles) < 2:
+        return 0.0
+    best_future_high = day_candles[-1].high
+    best_net = 0.0
+    for candle in reversed(day_candles[:-1]):
+        if best_future_high > candle.close:
+            gross_return = best_future_high / candle.close - 1.0
+            best_net = max(
+                best_net,
+                _net_pnl_for_long_return(stake_quote_amount, gross_return),
+            )
+        best_future_high = max(best_future_high, candle.high)
+    return max(0.0, best_net)
+
+
+def _buy_hold_diagnostic(candles, stake_quote_amount):
+    if len(candles) < 2:
+        return {
+            "net_pnl": 0.0,
+            "quote_per_day": 0.0,
+            "return_pct": 0.0,
+        }
+    gross_return = candles[-1].close / candles[0].close - 1.0
+    net_pnl = _net_pnl_for_long_return(stake_quote_amount, gross_return)
+    days = max(1.0, len(candles) / 1440)
+    return {
+        "net_pnl": net_pnl,
+        "quote_per_day": net_pnl / days,
+        "return_pct": net_pnl / stake_quote_amount * 100,
+    }
+
+
+def _long_only_oracle_summary(candles, stake_quote_amount, target_quote_per_day=None):
+    """Build a diagnostic upper-bound summary without affecting routing."""
+    target = (
+        _r.TARGET_QUOTE_PER_DAY
+        if target_quote_per_day is None
+        else target_quote_per_day
+    )
+    day_rows = []
+    for day, day_candles in _calendar_day_groups(candles):
+        net_pnl = _perfect_single_long_day_pnl(day_candles, stake_quote_amount)
+        day_rows.append(
+            {
+                "day": day,
+                "net_pnl": net_pnl,
+                "target_reached": net_pnl >= target,
+            }
+        )
+    total_net = sum(row["net_pnl"] for row in day_rows)
+    days = max(1.0, len(candles) / 1440)
+    average = total_net / days
+    target_day_count = sum(1 for row in day_rows if row["target_reached"])
+    positive_day_count = sum(1 for row in day_rows if row["net_pnl"] > 0)
+    top_days = sorted(day_rows, key=lambda row: row["net_pnl"], reverse=True)[:10]
+    required_capture = target / average if average > 0 else None
+    return {
+        "oracle_type": "diagnostic_perfect_single_long_per_day_same_day_high",
+        "tradeable": False,
+        "uses_future_high_inside_day": True,
+        "lookahead_safe_for_strategy": False,
+        "day_count": len(day_rows),
+        "positive_day_count": positive_day_count,
+        "target_day_count": target_day_count,
+        "target_day_rate": target_day_count / len(day_rows) if day_rows else 0.0,
+        "total_net_pnl": total_net,
+        "quote_per_day": average,
+        "target_ratio": average / target if target else None,
+        "required_capture_of_oracle_for_target": required_capture,
+        "best_day_net_pnl": max((row["net_pnl"] for row in day_rows), default=0.0),
+        "median_positive_day_net_pnl": _median(
+            [row["net_pnl"] for row in day_rows if row["net_pnl"] > 0]
+        ),
+        "top_days": top_days,
+        "buy_hold_diagnostic": _buy_hold_diagnostic(candles, stake_quote_amount),
+    }
+
+
+def _median(values):
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _build_target_feasibility_audit(
+    split,
+    stake_quote_amount,
+    selected_result,
+    best_training_quote_per_day,
+    candidate_count,
+    training_trade_allowed_count,
+    validation_trade_allowed_count,
+    selected_pool_size,
+):
+    target = _r.TARGET_QUOTE_PER_DAY
+    training_oracle = _long_only_oracle_summary(
+        split.training_candles,
+        stake_quote_amount,
+        target,
+    )
+    blindtest_oracle = _long_only_oracle_summary(
+        split.blindtest_candles,
+        stake_quote_amount,
+        target,
+    )
+    best_training_ratio = (
+        best_training_quote_per_day / target if target else None
+    )
+    blindtest_ratio = selected_result.quote_per_day / target if target else None
+    oracle_capture_by_blindtest = (
+        selected_result.quote_per_day / blindtest_oracle["quote_per_day"]
+        if blindtest_oracle["quote_per_day"] > 0
+        else None
+    )
+    oracle_capture_by_best_training = (
+        best_training_quote_per_day / training_oracle["quote_per_day"]
+        if training_oracle["quote_per_day"] > 0
+        else None
+    )
+    if selected_result.quote_per_day >= target:
+        assessment = "target_reached_by_blindtest"
+    elif best_training_quote_per_day < target * 0.25:
+        assessment = "target_far_above_current_candidate_space"
+    elif blindtest_oracle["required_capture_of_oracle_for_target"] is not None and (
+        blindtest_oracle["required_capture_of_oracle_for_target"] > 0.50
+    ):
+        assessment = "target_requires_unusually_high_oracle_capture"
+    else:
+        assessment = "target_possible_in_price_action_but_not_current_router"
+    return {
+        "audit_version": TARGET_FEASIBILITY_AUDIT_VERSION,
+        "scope": "diagnostic_only_no_trade_decision",
+        "changes_trade_selection": False,
+        "changes_gates": False,
+        "uses_blindtest_for_learning": False,
+        "blindtest_metrics_are_post_run_diagnostics_only": True,
+        "symbol": split.symbol,
+        "quote_asset": "USDC",
+        "stake_quote_amount": stake_quote_amount,
+        "target_quote_per_day": target,
+        "target_return_per_day_pct_on_stake": target / stake_quote_amount * 100,
+        "required_365_day_net_pnl": target * 365,
+        "candidate_count": candidate_count,
+        "training_trade_allowed_count": training_trade_allowed_count,
+        "validation_trade_allowed_count": validation_trade_allowed_count,
+        "selected_pool_size": selected_pool_size,
+        "best_training_quote_per_day": best_training_quote_per_day,
+        "best_training_target_ratio": best_training_ratio,
+        "blindtest_quote_per_day": selected_result.quote_per_day,
+        "blindtest_target_ratio": blindtest_ratio,
+        "oracle_capture_by_best_training_candidate": oracle_capture_by_best_training,
+        "oracle_capture_by_blindtest_pool": oracle_capture_by_blindtest,
+        "training_single_long_daily_oracle": training_oracle,
+        "blindtest_single_long_daily_oracle": blindtest_oracle,
+        "assessment": assessment,
+        "next_research_step": (
+            "use training-only walk-forward regime research before more "
+            "full-run router changes"
+        ),
+    }
+
+
+def _walkforward_fold_ranges(candles, fold_days=None):
+    candles = list(candles)
+    if not candles:
+        return []
+    days = WALKFORWARD_REGIME_FOLD_DAYS if fold_days is None else fold_days
+    fold_size = max(1, int(days * 1440))
+    folds = []
+    for start in range(0, len(candles), fold_size):
+        fold_candles = candles[start : start + fold_size]
+        if not fold_candles:
+            continue
+        folds.append(
+            {
+                "fold_index": len(folds),
+                "start": fold_candles[0].open_time,
+                "end": fold_candles[-1].open_time,
+                "candle_count": len(fold_candles),
+                "day_estimate": len(fold_candles) / 1440,
+            }
+        )
+    return folds
+
+
+def _candidate_filter_source(candidate):
+    if candidate.context_filter_lookback is not None:
+        return f"context_market:{candidate.context_filter_metric}"
+    if candidate.aggtrade_filter_lookback is not None:
+        return f"aggtrade:{candidate.aggtrade_filter_metric}"
+    if candidate.orderflow_filter_lookback is not None:
+        return f"kline_orderflow:{candidate.orderflow_filter_metric}"
+    if candidate.htf_filter_timeframe is not None:
+        return f"htf:{candidate.htf_filter_timeframe}:{candidate.htf_filter_metric}"
+    return "baseline_ethusdc_ohlcv"
+
+
+def _candidate_regime_research_key(candidate):
+    return "|".join(
+        (
+            candidate.search_pass,
+            candidate.family,
+            _candidate_filter_source(candidate),
+        )
+    )
+
+
+def _candidate_data_sources(candidate):
+    sources = ["ETHUSDC_1m_OHLCV"]
+    if candidate.htf_filter_timeframe is not None:
+        sources.append(f"ETHUSDC_{candidate.htf_filter_timeframe}_closed_htf")
+    if candidate.orderflow_filter_lookback is not None:
+        sources.append("ETHUSDC_kline_orderflow")
+    if candidate.aggtrade_filter_lookback is not None:
+        sources.append("ETHUSDC_aggtrade_minutes")
+    if candidate.context_filter_lookback is not None:
+        sources.append("BTCUSDC_ETHBTC_ETHUSDT_USDCUSDT_context")
+    return sources
+
+
+def _period_overlaps_fold(period, fold):
+    return period["start"] <= fold["end"] and period["end"] >= fold["start"]
+
+
+def _trade_belongs_to_fold(trade, fold):
+    return fold["start"] <= trade.entry_time <= fold["end"]
+
+
+def _summarize_trade_list(trades, day_count):
+    total_gross = sum(trade.gross_pnl for trade in trades)
+    total_fees = sum(trade.fees_paid for trade in trades)
+    total_net = sum(trade.net_pnl for trade in trades)
+    return {
+        "trade_count": len(trades),
+        "winning_trades": sum(1 for trade in trades if trade.net_pnl > 0),
+        "losing_trades": sum(1 for trade in trades if trade.net_pnl < 0),
+        "total_gross_pnl": total_gross,
+        "total_fees": total_fees,
+        "total_net_pnl": total_net,
+        "quote_per_day": total_net / max(1.0, day_count),
+        "profit_factor": _r._profit_factor(trades) if trades else None,
+    }
+
+
+def _walkforward_candidate_periods(
+    training_evaluation,
+    validation_evaluation,
+    selection_train_candles,
+    selection_validation_candles,
+):
+    periods = []
+    if training_evaluation is not None and selection_train_candles:
+        periods.append(
+            {
+                "source": "selection_train",
+                "start": selection_train_candles[0].open_time,
+                "end": selection_train_candles[-1].open_time,
+                "day_count": max(1.0, len(selection_train_candles) / 1440),
+                "trades": training_evaluation.result.trades,
+            }
+        )
+    if validation_evaluation is not None and selection_validation_candles:
+        periods.append(
+            {
+                "source": "selection_validation",
+                "start": selection_validation_candles[0].open_time,
+                "end": selection_validation_candles[-1].open_time,
+                "day_count": max(1.0, len(selection_validation_candles) / 1440),
+                "trades": validation_evaluation.result.trades,
+            }
+        )
+    return periods
+
+
+def _walkforward_candidate_row(
+    candidate,
+    training_evaluation,
+    validation_evaluation,
+    folds,
+    selection_train_candles,
+    selection_validation_candles,
+):
+    periods = _walkforward_candidate_periods(
+        training_evaluation,
+        validation_evaluation,
+        selection_train_candles,
+        selection_validation_candles,
+    )
+    period_trades = [
+        trade
+        for period in periods
+        for trade in period["trades"]
+    ]
+    analyzed_day_count = sum(period["day_count"] for period in periods)
+    fold_rows = []
+    for fold in folds:
+        evaluated = any(_period_overlaps_fold(period, fold) for period in periods)
+        if not evaluated:
+            continue
+        trades = [
+            trade
+            for trade in period_trades
+            if _trade_belongs_to_fold(trade, fold)
+        ]
+        summary = _summarize_trade_list(trades, fold["day_estimate"])
+        fold_rows.append(
+            {
+                "fold_index": fold["fold_index"],
+                "start": fold["start"],
+                "end": fold["end"],
+                "evaluated": True,
+                **summary,
+            }
+        )
+    active_folds = [row for row in fold_rows if row["trade_count"] > 0]
+    positive_active_folds = [
+        row for row in active_folds if row["total_net_pnl"] > 0
+    ]
+    negative_material_folds = [
+        row
+        for row in active_folds
+        if row["total_net_pnl"] < 0
+        and row["trade_count"] >= TEMPORAL_VALIDATION_MIN_SEGMENT_TRADES
+    ]
+    total_summary = _summarize_trade_list(
+        period_trades,
+        analyzed_day_count if analyzed_day_count else 1.0,
+    )
+    positive_active_fold_rate = (
+        len(positive_active_folds) / len(active_folds) if active_folds else 0.0
+    )
+    required_active_folds = min(3, max(1, len(fold_rows)))
+    if total_summary["trade_count"] == 0:
+        stability_label = "no_training_window_trades"
+    elif total_summary["total_net_pnl"] <= 0:
+        stability_label = "training_window_negative"
+    elif len(active_folds) < required_active_folds:
+        stability_label = "too_few_active_folds"
+    elif positive_active_fold_rate >= 0.67 and not negative_material_folds:
+        stability_label = "training_stable_positive"
+    elif positive_active_fold_rate >= 0.50:
+        stability_label = "training_mixed_positive"
+    else:
+        stability_label = "training_unstable"
+    return {
+        "candidate_id": candidate.candidate_id,
+        "family": candidate.family,
+        "search_pass": candidate.search_pass,
+        "lookback_candles": candidate.lookback_candles,
+        "entry_threshold_pct": candidate.entry_threshold_pct,
+        "take_profit_pct": candidate.take_profit_pct,
+        "stop_loss_pct": candidate.stop_loss_pct,
+        "max_hold_candles": candidate.max_hold_candles,
+        "filter_source": _candidate_filter_source(candidate),
+        "data_sources": _candidate_data_sources(candidate),
+        "regime_key": _candidate_regime_research_key(candidate),
+        "training_trade_allowed": (
+            training_evaluation.trade_allowed
+            if training_evaluation is not None
+            else False
+        ),
+        "training_rejection_reason": (
+            training_evaluation.rejection_reason
+            if training_evaluation is not None
+            else None
+        ),
+        "validation_result_available": validation_evaluation is not None,
+        "validation_trade_allowed": (
+            validation_evaluation.trade_allowed
+            if validation_evaluation is not None
+            else False
+        ),
+        "validation_rejection_reason": (
+            validation_evaluation.rejection_reason
+            if validation_evaluation is not None
+            else None
+        ),
+        "analyzed_scope": (
+            "selection_train_plus_selection_validation"
+            if validation_evaluation is not None
+            else "selection_train_only"
+        ),
+        "folds_evaluated": len(fold_rows),
+        "active_fold_count": len(active_folds),
+        "positive_active_fold_count": len(positive_active_folds),
+        "negative_material_fold_count": len(negative_material_folds),
+        "positive_active_fold_rate": positive_active_fold_rate,
+        "worst_fold_net_pnl": min(
+            (row["total_net_pnl"] for row in active_folds),
+            default=0.0,
+        ),
+        "best_fold_net_pnl": max(
+            (row["total_net_pnl"] for row in active_folds),
+            default=0.0,
+        ),
+        "stability_label": stability_label,
+        "folds": fold_rows,
+        **total_summary,
+    }
+
+
+def _build_regime_summary(candidate_rows):
+    regimes = {}
+    for row in candidate_rows:
+        key = row["regime_key"]
+        regime = regimes.setdefault(
+            key,
+            {
+                "regime_key": key,
+                "search_pass": row["search_pass"],
+                "family": row["family"],
+                "filter_source": row["filter_source"],
+                "candidate_count": 0,
+                "training_trade_allowed_count": 0,
+                "validation_trade_allowed_count": 0,
+                "stable_candidate_count": 0,
+                "trade_count": 0,
+                "total_net_pnl": 0.0,
+                "total_gross_pnl": 0.0,
+                "total_fees": 0.0,
+                "best_candidate_quote_per_day": None,
+                "best_candidate_id": None,
+                "fold_totals": {},
+            },
+        )
+        regime["candidate_count"] += 1
+        if row["training_trade_allowed"]:
+            regime["training_trade_allowed_count"] += 1
+        if row["validation_trade_allowed"]:
+            regime["validation_trade_allowed_count"] += 1
+        if row["stability_label"] == "training_stable_positive":
+            regime["stable_candidate_count"] += 1
+        regime["trade_count"] += row["trade_count"]
+        regime["total_net_pnl"] += row["total_net_pnl"]
+        regime["total_gross_pnl"] += row["total_gross_pnl"]
+        regime["total_fees"] += row["total_fees"]
+        if (
+            regime["best_candidate_quote_per_day"] is None
+            or row["quote_per_day"] > regime["best_candidate_quote_per_day"]
+        ):
+            regime["best_candidate_quote_per_day"] = row["quote_per_day"]
+            regime["best_candidate_id"] = row["candidate_id"]
+        for fold in row["folds"]:
+            fold_total = regime["fold_totals"].setdefault(
+                fold["fold_index"],
+                {
+                    "fold_index": fold["fold_index"],
+                    "start": fold["start"],
+                    "end": fold["end"],
+                    "candidate_count": 0,
+                    "active_candidate_count": 0,
+                    "trade_count": 0,
+                    "total_net_pnl": 0.0,
+                },
+            )
+            fold_total["candidate_count"] += 1
+            if fold["trade_count"] > 0:
+                fold_total["active_candidate_count"] += 1
+            fold_total["trade_count"] += fold["trade_count"]
+            fold_total["total_net_pnl"] += fold["total_net_pnl"]
+    summaries = []
+    for regime in regimes.values():
+        fold_totals = sorted(
+            regime.pop("fold_totals").values(),
+            key=lambda row: row["fold_index"],
+        )
+        active_fold_totals = [
+            row for row in fold_totals if row["active_candidate_count"] > 0
+        ]
+        positive_fold_totals = [
+            row for row in active_fold_totals if row["total_net_pnl"] > 0
+        ]
+        regime["active_fold_count"] = len(active_fold_totals)
+        regime["positive_active_fold_count"] = len(positive_fold_totals)
+        regime["positive_active_fold_rate"] = (
+            len(positive_fold_totals) / len(active_fold_totals)
+            if active_fold_totals
+            else 0.0
+        )
+        regime["stable_candidate_rate"] = (
+            regime["stable_candidate_count"] / regime["candidate_count"]
+            if regime["candidate_count"]
+            else 0.0
+        )
+        regime["fold_totals"] = fold_totals
+        summaries.append(regime)
+    return sorted(
+        summaries,
+        key=lambda row: (
+            row["stable_candidate_count"],
+            row["positive_active_fold_rate"],
+            row["total_net_pnl"],
+            row["best_candidate_quote_per_day"] or 0.0,
+        ),
+        reverse=True,
+    )
+
+
+def _build_walkforward_red_flags(candidate_rows, selected_pool_ids):
+    flags = []
+    stable_rows = [
+        row for row in candidate_rows
+        if row["stability_label"] == "training_stable_positive"
+    ]
+    if not stable_rows:
+        flags.append("no_candidate_stable_positive_across_training_folds")
+    target_like_rows = [
+        row for row in candidate_rows
+        if row["quote_per_day"] >= _r.TARGET_QUOTE_PER_DAY
+    ]
+    if not target_like_rows:
+        flags.append("no_training_candidate_near_3_usdc_per_day")
+    selected_rows = [
+        row for row in candidate_rows if row["candidate_id"] in selected_pool_ids
+    ]
+    unstable_selected = [
+        row for row in selected_rows
+        if row["stability_label"] not in {
+            "training_stable_positive",
+            "training_mixed_positive",
+        }
+    ]
+    if unstable_selected:
+        flags.append("selected_pool_contains_training_unstable_candidates")
+    if any(
+        row["validation_result_available"] and not row["validation_trade_allowed"]
+        for row in selected_rows
+    ):
+        flags.append("selected_pool_has_validation_rejection_mismatch")
+    return flags
+
+
+def _build_walkforward_candidate_rows(
+    training_candles,
+    selection_train_candles,
+    selection_validation_candles,
+    evaluations,
+    validation_evaluations,
+):
+    folds = _walkforward_fold_ranges(training_candles)
+    training_by_id = {
+        evaluation.candidate.candidate_id: evaluation for evaluation in evaluations
+    }
+    validation_by_id = {
+        evaluation.candidate.candidate_id: evaluation
+        for evaluation in validation_evaluations
+    }
+    candidate_ids = sorted(set(training_by_id) | set(validation_by_id))
+    candidate_rows = []
+    for candidate_id in candidate_ids:
+        training_evaluation = training_by_id.get(candidate_id)
+        validation_evaluation = validation_by_id.get(candidate_id)
+        candidate = (
+            training_evaluation.candidate
+            if training_evaluation is not None
+            else validation_evaluation.candidate
+        )
+        candidate_rows.append(
+            _walkforward_candidate_row(
+                candidate,
+                training_evaluation,
+                validation_evaluation,
+                folds,
+                selection_train_candles,
+                selection_validation_candles,
+            )
+        )
+    return folds, candidate_rows
+
+
+def _build_walkforward_regime_research(
+    training_candles,
+    selection_train_candles,
+    selection_validation_candles,
+    evaluations,
+    validation_evaluations,
+    selected_pool,
+    folds=None,
+    candidate_rows=None,
+    used_for_pool_selection=False,
+):
+    """Training-only map for candidate/regime stability.
+
+    V17 wrote this as pure diagnostics. V18 may also use the same rows as a
+    training-only pool-selection input.  It still never uses blindtest candles.
+    """
+    if folds is None or candidate_rows is None:
+        folds, candidate_rows = _build_walkforward_candidate_rows(
+            training_candles,
+            selection_train_candles,
+            selection_validation_candles,
+            evaluations,
+            validation_evaluations,
+        )
+    selected_pool_ids = {
+        evaluation.candidate.candidate_id for evaluation in selected_pool
+    }
+    stable_rows = [
+        row for row in candidate_rows
+        if row["stability_label"] == "training_stable_positive"
+    ]
+    sorted_candidates = sorted(
+        candidate_rows,
+        key=lambda row: (
+            row["stability_label"] == "training_stable_positive",
+            row["positive_active_fold_rate"],
+            row["quote_per_day"],
+            row["total_net_pnl"],
+        ),
+        reverse=True,
+    )
+    selected_pool_diagnostics = [
+        row for row in sorted_candidates if row["candidate_id"] in selected_pool_ids
+    ]
+    return {
+        "version": WALKFORWARD_REGIME_RESEARCH_VERSION,
+        "selection_version": WALKFORWARD_STABILITY_POOL_SELECTION_VERSION,
+        "scope": (
+            "training_only_pool_selection_input_plus_diagnostics"
+            if used_for_pool_selection
+            else "training_only_diagnostic_no_trade_decision"
+        ),
+        "changes_trade_selection": bool(used_for_pool_selection),
+        "changes_gates": False,
+        "uses_blindtest": False,
+        "uses_blindtest_for_learning": False,
+        "blindtest_metrics_used": False,
+        "used_for_pool_selection": bool(used_for_pool_selection),
+        "fold_days": WALKFORWARD_REGIME_FOLD_DAYS,
+        "fold_count": len(folds),
+        "folds": folds,
+        "selection_train_start": (
+            selection_train_candles[0].open_time if selection_train_candles else None
+        ),
+        "selection_train_end": (
+            selection_train_candles[-1].open_time if selection_train_candles else None
+        ),
+        "selection_validation_start": (
+            selection_validation_candles[0].open_time
+            if selection_validation_candles
+            else None
+        ),
+        "selection_validation_end": (
+            selection_validation_candles[-1].open_time
+            if selection_validation_candles
+            else None
+        ),
+        "candidate_count": len(candidate_rows),
+        "validation_candidate_count": len(
+            {evaluation.candidate.candidate_id for evaluation in validation_evaluations}
+        ),
+        "stable_candidate_count": len(stable_rows),
+        "training_stable_positive_candidate_ids": [
+            row["candidate_id"] for row in stable_rows[:50]
+        ],
+        "regime_summary": _build_regime_summary(candidate_rows)[:30],
+        "top_candidate_walkforward_rows": sorted_candidates[:40],
+        "selected_pool_walkforward_diagnostics": selected_pool_diagnostics,
+        "red_flags": _build_walkforward_red_flags(
+            candidate_rows,
+            selected_pool_ids,
+        ),
+        "how_to_use_next": (
+            "V18 uses this training-only map for pool ordering. The next step is "
+            "to inspect selected_pool_walkforward_diagnostics after the full run "
+            "and only then decide whether a stricter regime router is justified."
+        ),
+    }
 
 
 def _evaluate_training_candidates(candidates, candles, start_capital_reference, filters, progress_callback=None):
@@ -1014,7 +1738,7 @@ def _select_candidate_pool_with_diagnostics(evaluations):
     allowed = [evaluation for evaluation in evaluations if evaluation.trade_allowed]
     if not allowed:
         return [], {
-            "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+            "pool_selection_version": WALKFORWARD_STABILITY_POOL_SELECTION_VERSION,
             "max_count": 0,
             "family_cap": 0,
             "allowed_input_count": 0,
@@ -1053,7 +1777,7 @@ def _select_candidate_pool_with_diagnostics(evaluations):
         if len(pool) >= max_count:
             break
     return pool, {
-        "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+        "pool_selection_version": WALKFORWARD_STABILITY_POOL_SELECTION_VERSION,
         "max_count": max_count,
         "family_cap": family_cap,
         "allowed_input_count": len(allowed),
@@ -1193,6 +1917,258 @@ def _pool_validation_rejection(result):
     return None
 
 
+def _temporal_validation_stability_report(
+    result,
+    candles,
+    segment_days=None,
+):
+    if segment_days is None:
+        segment_days = TEMPORAL_VALIDATION_SEGMENT_DAYS
+    segment_size = max(1, int(segment_days) * 1440)
+    segments = []
+    if not candles:
+        return {
+            "guard_used": True,
+            "evaluated": False,
+            "skip_reason": "no_validation_candles",
+            "segment_days": segment_days,
+            "minimum_segments": TEMPORAL_VALIDATION_MIN_SEGMENTS,
+            "segment_count": 0,
+            "active_segment_count": 0,
+            "positive_active_segment_count": 0,
+            "negative_material_segment_count": 0,
+            "positive_active_segment_rate": None,
+            "rejection_reason": None,
+            "segments": [],
+        }
+    for start in range(0, len(candles), segment_size):
+        segment_candles = candles[start : start + segment_size]
+        if not segment_candles:
+            continue
+        if len(segment_candles) < 1440:
+            continue
+        start_time = segment_candles[0].open_time
+        end_time = segment_candles[-1].open_time
+        segment_trades = [
+            trade
+            for trade in result.trades
+            if start_time <= trade.exit_time <= end_time
+        ]
+        net_pnl = sum(trade.net_pnl for trade in segment_trades)
+        gross_pnl = sum(trade.gross_pnl for trade in segment_trades)
+        fees = sum(trade.fees_paid for trade in segment_trades)
+        segments.append(
+            {
+                "start": start_time,
+                "end": end_time,
+                "days": len(segment_candles) / 1440,
+                "trade_count": len(segment_trades),
+                "active_days": _active_days(segment_trades),
+                "net_pnl": net_pnl,
+                "gross_pnl": gross_pnl,
+                "fees": fees,
+                "positive": net_pnl > 0,
+                "negative_material": (
+                    net_pnl <= 0
+                    and len(segment_trades)
+                    >= TEMPORAL_VALIDATION_MIN_SEGMENT_TRADES
+                ),
+            }
+        )
+    active_segments = [segment for segment in segments if segment["trade_count"] > 0]
+    positive_active_segments = [
+        segment for segment in active_segments if segment["net_pnl"] > 0
+    ]
+    negative_material_segments = [
+        segment for segment in segments if segment["negative_material"]
+    ]
+    positive_rate = (
+        len(positive_active_segments) / len(active_segments)
+        if active_segments
+        else None
+    )
+    evaluated = len(segments) >= TEMPORAL_VALIDATION_MIN_SEGMENTS
+    rejection = None
+    if evaluated and len(active_segments) < TEMPORAL_VALIDATION_MIN_ACTIVE_SEGMENTS:
+        rejection = "rejected_by_temporal_validation_activity"
+    elif evaluated and negative_material_segments:
+        rejection = "rejected_by_temporal_validation_stability"
+    elif (
+        evaluated
+        and positive_rate is not None
+        and positive_rate < TEMPORAL_VALIDATION_MIN_POSITIVE_ACTIVE_SEGMENT_RATE
+    ):
+        rejection = "rejected_by_temporal_validation_stability"
+    return {
+        "guard_used": True,
+        "evaluated": evaluated,
+        "skip_reason": None if evaluated else "insufficient_validation_segments",
+        "segment_days": segment_days,
+        "minimum_segments": TEMPORAL_VALIDATION_MIN_SEGMENTS,
+        "minimum_active_segments": TEMPORAL_VALIDATION_MIN_ACTIVE_SEGMENTS,
+        "minimum_segment_trades_for_negative_check": (
+            TEMPORAL_VALIDATION_MIN_SEGMENT_TRADES
+        ),
+        "minimum_positive_active_segment_rate": (
+            TEMPORAL_VALIDATION_MIN_POSITIVE_ACTIVE_SEGMENT_RATE
+        ),
+        "segment_count": len(segments),
+        "active_segment_count": len(active_segments),
+        "positive_active_segment_count": len(positive_active_segments),
+        "negative_material_segment_count": len(negative_material_segments),
+        "positive_active_segment_rate": positive_rate,
+        "rejection_reason": rejection,
+        "segments": segments,
+    }
+
+
+def _temporal_validation_stability_rejection(result, candles, segment_days=None):
+    report = _temporal_validation_stability_report(
+        result,
+        candles,
+        segment_days=segment_days,
+    )
+    return report["rejection_reason"]
+
+
+def _walkforward_stability_rank(row):
+    if row is None:
+        return -1
+    return {
+        "training_stable_positive": 4,
+        "training_mixed_positive": 2,
+        "too_few_active_folds": 1,
+        "training_unstable": 0,
+        "training_window_negative": -1,
+        "no_training_window_trades": -2,
+    }.get(row.get("stability_label"), 0)
+
+
+def _walkforward_stability_summary(row):
+    if row is None:
+        return {
+            "available": False,
+            "stability_label": "missing_walkforward_row",
+            "rank": -1,
+        }
+    return {
+        "available": True,
+        "candidate_id": row["candidate_id"],
+        "stability_label": row["stability_label"],
+        "rank": _walkforward_stability_rank(row),
+        "filter_source": row["filter_source"],
+        "active_fold_count": row["active_fold_count"],
+        "positive_active_fold_count": row["positive_active_fold_count"],
+        "positive_active_fold_rate": row["positive_active_fold_rate"],
+        "negative_material_fold_count": row["negative_material_fold_count"],
+        "worst_fold_net_pnl": row["worst_fold_net_pnl"],
+        "walkforward_total_net_pnl": row["total_net_pnl"],
+        "walkforward_quote_per_day": row["quote_per_day"],
+        "validation_trade_allowed": row["validation_trade_allowed"],
+    }
+
+
+def _walkforward_pool_order_key(evaluation, walkforward_stability_by_candidate_id):
+    row = (walkforward_stability_by_candidate_id or {}).get(
+        evaluation.candidate.candidate_id
+    )
+    return (
+        _walkforward_stability_rank(row),
+        -(row.get("negative_material_fold_count", 999) if row else 999),
+        row.get("positive_active_fold_rate", 0.0) if row else 0.0,
+        row.get("active_fold_count", 0) if row else 0,
+        row.get("quote_per_day", 0.0) if row else 0.0,
+        evaluation.result.quote_per_day,
+        evaluation.balanced_score,
+        -evaluation.result.max_drawdown,
+        evaluation.result.trades_per_day,
+    )
+
+
+def _walkforward_stability_label_counts(
+    evaluations,
+    walkforward_stability_by_candidate_id,
+):
+    counts = {}
+    missing = 0
+    for evaluation in evaluations:
+        row = (walkforward_stability_by_candidate_id or {}).get(
+            evaluation.candidate.candidate_id
+        )
+        if row is None:
+            missing += 1
+            continue
+        label = row["stability_label"]
+        counts[label] = counts.get(label, 0) + 1
+    if missing:
+        counts["missing_walkforward_row"] = missing
+    return counts
+
+
+def _walkforward_stable_candidates_available(
+    evaluations,
+    walkforward_stability_by_candidate_id,
+):
+    return any(
+        (
+            (walkforward_stability_by_candidate_id or {})
+            .get(evaluation.candidate.candidate_id, {})
+            .get("stability_label")
+            == WALKFORWARD_STABILITY_REQUIRED_LABEL
+        )
+        for evaluation in evaluations
+    )
+
+
+def _walkforward_all_positive_candidate(row):
+    if row is None:
+        return False
+    active_fold_count = row.get("active_fold_count", 0)
+    return (
+        row.get("stability_label") == WALKFORWARD_STABILITY_REQUIRED_LABEL
+        and active_fold_count >= WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS
+        and row.get("negative_material_fold_count", 0) == 0
+        and row.get("positive_active_fold_count", 0) == active_fold_count
+        and row.get("worst_fold_net_pnl", 0.0) > 0
+    )
+
+
+def _walkforward_all_positive_candidates_available(
+    evaluations,
+    walkforward_stability_by_candidate_id,
+):
+    return any(
+        _walkforward_all_positive_candidate(
+            (walkforward_stability_by_candidate_id or {}).get(
+                evaluation.candidate.candidate_id
+            )
+        )
+        for evaluation in evaluations
+    )
+
+
+def _walkforward_stability_policy_rejection(
+    evaluation,
+    walkforward_stability_by_candidate_id,
+    stable_candidates_available,
+    all_positive_candidates_available=False,
+):
+    row = (walkforward_stability_by_candidate_id or {}).get(
+        evaluation.candidate.candidate_id
+    )
+    if all_positive_candidates_available and not (
+        _walkforward_all_positive_candidate(row)
+    ):
+        return "rejected_by_walkforward_all_positive_policy"
+    if not stable_candidates_available:
+        return None
+    if row is None:
+        return "rejected_by_walkforward_stability_policy"
+    if row.get("stability_label") != WALKFORWARD_STABILITY_REQUIRED_LABEL:
+        return "rejected_by_walkforward_stability_policy"
+    return None
+
+
 def _optimize_validation_pool(
     validation_evaluations,
     candles,
@@ -1202,6 +2178,7 @@ def _optimize_validation_pool(
     orderflow_warmup_candles=None,
     aggtrade_warmup_candles=None,
     context_warmup_candles=None,
+    walkforward_stability_by_candidate_id=None,
 ):
     """Build a validation-safe shared-account pool without using blindtest data."""
     allowed = [evaluation for evaluation in validation_evaluations if evaluation.trade_allowed]
@@ -1211,25 +2188,58 @@ def _optimize_validation_pool(
             start_capital,
         )
         return [], empty, {
-            "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+            "pool_selection_version": WALKFORWARD_STABILITY_POOL_SELECTION_VERSION,
             "candidate_library_count": 0,
             "max_count": 0,
             "family_cap": 0,
             "selected_count": 0,
-            "rejection_counts": {"no_validation_allowed_candidates": 1},
+            "temporal_validation_guard_used": True,
+            "walkforward_stability_pool_selection_used": bool(
+                walkforward_stability_by_candidate_id
+            ),
+            "walkforward_stability_scope": (
+                "selection_train_plus_selection_validation_only"
+            ),
+            "walkforward_stability_blindtest_learning": False,
+            "walkforward_stability_policy": WALKFORWARD_STABILITY_POLICY,
+            "walkforward_stability_required_label": (
+                WALKFORWARD_STABILITY_REQUIRED_LABEL
+            ),
+            "walkforward_stable_candidates_available": False,
+            "walkforward_all_positive_policy": WALKFORWARD_ALL_POSITIVE_POLICY,
+            "walkforward_all_positive_min_active_folds": (
+                WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS
+            ),
+            "walkforward_all_positive_candidates_available": False,
+            "temporal_validation_segment_days": TEMPORAL_VALIDATION_SEGMENT_DAYS,
+            "rejection_counts": {
+                "no_validation_allowed_candidates": 1,
+                "rejected_by_walkforward_stability_policy": 0,
+                "rejected_by_walkforward_all_positive_policy": 0,
+            },
             "selected_candidate_ids": [],
+            "rejected_walkforward_policy_samples": [],
+            "rejected_walkforward_all_positive_policy_samples": [],
             "accepted_steps": [],
         }
     max_count = max(1, min(8, _ceil(_run_days(validation_evaluations) / 28.0)))
     family_cap = 1
     min_incremental_quote_per_day = 0.03
+    stable_candidates_available = _walkforward_stable_candidates_available(
+        allowed,
+        walkforward_stability_by_candidate_id,
+    )
+    all_positive_candidates_available = (
+        _walkforward_all_positive_candidates_available(
+            allowed,
+            walkforward_stability_by_candidate_id,
+        )
+    )
     ordered = sorted(
         allowed,
-        key=lambda evaluation: (
-            evaluation.result.quote_per_day,
-            evaluation.balanced_score,
-            -evaluation.result.max_drawdown,
-            evaluation.result.trades_per_day,
+        key=lambda evaluation: _walkforward_pool_order_key(
+            evaluation,
+            walkforward_stability_by_candidate_id,
         ),
         reverse=True,
     )
@@ -1246,12 +2256,44 @@ def _optimize_validation_pool(
         "rejected_by_pool_validation": 0,
         "rejected_by_pool_no_incremental_edge": 0,
         "rejected_by_pool_small_incremental_edge": 0,
+        "rejected_by_temporal_validation_activity": 0,
+        "rejected_by_temporal_validation_stability": 0,
+        "rejected_by_walkforward_stability_policy": 0,
+        "rejected_by_walkforward_all_positive_policy": 0,
     }
     accepted_steps = []
     rejected_pool_reasons = {}
+    rejected_walkforward_policy_samples = []
+    rejected_walkforward_all_positive_policy_samples = []
     for evaluation in ordered:
         if len(pool) >= max_count:
             break
+        walkforward_rejection = _walkforward_stability_policy_rejection(
+            evaluation,
+            walkforward_stability_by_candidate_id,
+            stable_candidates_available,
+            all_positive_candidates_available=all_positive_candidates_available,
+        )
+        if walkforward_rejection is not None:
+            rejection_counts[walkforward_rejection] += 1
+            sample = {
+                "candidate_id": evaluation.candidate.candidate_id,
+                "family": evaluation.candidate.family,
+                "walkforward_stability": _walkforward_stability_summary(
+                    (walkforward_stability_by_candidate_id or {}).get(
+                        evaluation.candidate.candidate_id
+                    )
+                ),
+            }
+            if (
+                walkforward_rejection
+                == "rejected_by_walkforward_all_positive_policy"
+            ):
+                if len(rejected_walkforward_all_positive_policy_samples) < 25:
+                    rejected_walkforward_all_positive_policy_samples.append(sample)
+            elif len(rejected_walkforward_policy_samples) < 25:
+                rejected_walkforward_policy_samples.append(sample)
+            continue
         family = evaluation.candidate.family
         if family_counts.get(family, 0) >= family_cap:
             rejection_counts["rejected_by_family_cap"] += 1
@@ -1272,8 +2314,15 @@ def _optimize_validation_pool(
             context_warmup_candles=context_warmup_candles,
         )
         rejection = _pool_validation_rejection(trial_result)
+        if rejection is None:
+            rejection = _temporal_validation_stability_rejection(
+                trial_result,
+                candles,
+            )
         if rejection is not None:
             rejection_counts["rejected_by_pool_validation"] += 1
+            if rejection in rejection_counts:
+                rejection_counts[rejection] += 1
             rejected_pool_reasons[rejection] = rejected_pool_reasons.get(rejection, 0) + 1
             continue
         incremental_quote_per_day = (
@@ -1305,19 +2354,68 @@ def _optimize_validation_pool(
                 "validation_pool_fee_to_gross_ratio": _r._fee_to_gross_ratio(
                     current_result
                 ),
+                "walkforward_stability": _walkforward_stability_summary(
+                    (walkforward_stability_by_candidate_id or {}).get(
+                        evaluation.candidate.candidate_id
+                    )
+                ),
+                "validation_pool_temporal_stability": (
+                    _temporal_validation_stability_report(current_result, candles)
+                ),
             }
         )
     diagnostics = {
-        "pool_selection_version": "activity_first_v14_conservative_regime_pool",
+        "pool_selection_version": WALKFORWARD_STABILITY_POOL_SELECTION_VERSION,
         "candidate_library_count": len(allowed),
         "max_count": max_count,
         "family_cap": family_cap,
         "min_incremental_quote_per_day": min_incremental_quote_per_day,
+        "temporal_validation_guard_used": True,
+        "walkforward_stability_pool_selection_used": bool(
+            walkforward_stability_by_candidate_id
+        ),
+        "walkforward_stability_scope": (
+            "selection_train_plus_selection_validation_only"
+        ),
+        "walkforward_stability_blindtest_learning": False,
+        "walkforward_stability_policy": WALKFORWARD_STABILITY_POLICY,
+        "walkforward_stability_required_label": (
+            WALKFORWARD_STABILITY_REQUIRED_LABEL
+        ),
+        "walkforward_stable_candidates_available": stable_candidates_available,
+        "walkforward_all_positive_policy": WALKFORWARD_ALL_POSITIVE_POLICY,
+        "walkforward_all_positive_min_active_folds": (
+            WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS
+        ),
+        "walkforward_all_positive_candidates_available": (
+            all_positive_candidates_available
+        ),
+        "walkforward_stability_label_counts": (
+            _walkforward_stability_label_counts(
+                allowed,
+                walkforward_stability_by_candidate_id,
+            )
+        ),
+        "temporal_validation_segment_days": TEMPORAL_VALIDATION_SEGMENT_DAYS,
         "selected_count": len(pool),
         "rejection_counts": rejection_counts,
         "pool_validation_rejection_reasons": rejected_pool_reasons,
         "selected_candidate_ids": [
             evaluation.candidate.candidate_id for evaluation in pool
+        ],
+        "rejected_walkforward_policy_samples": (
+            rejected_walkforward_policy_samples
+        ),
+        "rejected_walkforward_all_positive_policy_samples": (
+            rejected_walkforward_all_positive_policy_samples
+        ),
+        "selected_walkforward_stability": [
+            _walkforward_stability_summary(
+                (walkforward_stability_by_candidate_id or {}).get(
+                    evaluation.candidate.candidate_id
+                )
+            )
+            for evaluation in pool
         ],
         "accepted_steps": accepted_steps,
     }
@@ -2011,6 +3109,16 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     validation_allowed = [
         evaluation for evaluation in validation_evaluations if evaluation.trade_allowed
     ]
+    walkforward_folds, walkforward_candidate_rows = _build_walkforward_candidate_rows(
+        split.training_candles,
+        selection_train_candles,
+        selection_validation_candles,
+        evaluations,
+        validation_evaluations,
+    )
+    walkforward_stability_by_candidate_id = {
+        row["candidate_id"]: row for row in walkforward_candidate_rows
+    }
     optimized_pool, validation_pool_result, pool_selection_diagnostics = (
         _optimize_validation_pool(
             validation_evaluations,
@@ -2021,6 +3129,9 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             orderflow_warmup_candles=selection_train_candles[-2880:],
             aggtrade_warmup_candles=selection_train_candles[-2880:],
             context_warmup_candles=selection_train_candles[-2880:],
+            walkforward_stability_by_candidate_id=(
+                walkforward_stability_by_candidate_id
+            ),
         )
     )
     validation_pool_rejection = (
@@ -2046,7 +3157,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     training_status, training_reason = _candidate_space_status(evaluations)
     if selected_pool:
         status = "trade_allowed_found"
-        reason = "internal selection validation found a pool candidate"
+        reason = "internal validation plus walkforward stability found a pool candidate"
     elif allowed:
         status = "trade_allowed_blocked"
         reason = (
@@ -2079,10 +3190,12 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             setup["selection_validation_metrics"] = _compact_evaluation_metrics(
                 validation_evaluation
             )
-            setup["selected_by"] = "selection_train_plus_internal_validation"
+            setup["selected_by"] = (
+                "selection_train_plus_internal_validation_plus_walkforward_stability"
+            )
             selected_setups.append(setup)
         selection_reason = (
-            "selection_train_plus_internal_validation_pool_one_shared_account_context"
+            "selection_train_validation_walkforward_stability_pool_one_shared_account_context"
         )
     else:
         selected_result = _r._empty_simulation_result(
@@ -2106,6 +3219,27 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "blindtest_target_reached"
         if selected_pool and selected_result.quote_per_day >= _r.TARGET_QUOTE_PER_DAY
         else "target_not_reached"
+    )
+    target_feasibility_audit = _build_target_feasibility_audit(
+        split,
+        stake_quote_amount,
+        selected_result,
+        best_training_quote_per_day,
+        len(evaluations),
+        len(allowed),
+        len(validation_allowed),
+        len(selected_pool),
+    )
+    walkforward_regime_research = _build_walkforward_regime_research(
+        split.training_candles,
+        selection_train_candles,
+        selection_validation_candles,
+        evaluations,
+        validation_evaluations,
+        selected_pool,
+        folds=walkforward_folds,
+        candidate_rows=walkforward_candidate_rows,
+        used_for_pool_selection=True,
     )
     if progress_callback is not None:
         progress_callback(
@@ -2326,6 +3460,12 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "validation_pool_fee_to_gross_ratio": _r._fee_to_gross_ratio(
             validation_pool_result
         ),
+        "validation_pool_temporal_stability": (
+            _temporal_validation_stability_report(
+                validation_pool_result,
+                selection_validation_candles,
+            )
+        ),
         "validation_pool_passed": validation_pool_passed,
         "validation_pool_rejection_reason": validation_pool_rejection,
         "final_blindtest_pool_size": len(selected_pool),
@@ -2358,6 +3498,14 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "context_market_training_edge_analysis": context_market_training_edge_analysis,
         "context_market_filter_integration": context_market_filter_integration,
         "htf_filter_integration": htf_filter_integration,
+        "target_feasibility_audit": target_feasibility_audit,
+        "walkforward_regime_research": walkforward_regime_research,
+        "walkforward_regime_research_version": WALKFORWARD_REGIME_RESEARCH_VERSION,
+        "walkforward_stability_pool_selection_version": (
+            WALKFORWARD_STABILITY_POOL_SELECTION_VERSION
+        ),
+        "walkforward_regime_research_used_for_trade_decision": True,
+        "walkforward_stability_used_for_pool_selection": True,
         "best_activity_candidate": _candidate_summary(best_activity, derived_features) if best_activity else None,
         "best_edge_candidate": _candidate_summary(best_edge, derived_features) if best_edge else None,
         "best_balanced_candidate": _candidate_summary(best_balanced, derived_features) if best_balanced else None,
@@ -2370,6 +3518,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "pool_executed_trades": selected_result.trade_count,
         "pool_skipped_overlaps": selected_result.no_trade_count,
         "target_feasibility_status": target_status,
+        "target_feasibility_assessment": target_feasibility_audit["assessment"],
         "best_training_quote_per_day": best_training_quote_per_day,
         "diagnostic_only": not selected_pool,
         "selection_reason": selection_reason,
@@ -2381,10 +3530,12 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "diagnostic_only": not selected_pool,
         "trade_allowed": bool(selected_pool),
         "blindtest_strategy_executed": bool(selected_pool),
-        "selection_policy": "selection_train_validation_guard_pool_one_shared_account_context",
+        "selection_policy": (
+            "selection_train_validation_walkforward_stability_pool_one_shared_account_context"
+        ),
         "selection_reason": selection_reason,
         "exchange_info_filters_used": filters is not None,
-        "candidate_generation_version": "activity_first_v14_conservative_regime_pool",
+        "candidate_generation_version": WALKFORWARD_STABILITY_POOL_SELECTION_VERSION,
         "base_candidate_generation_version": "activity_first_v11_eth_regime_expanded",
         "eth_specific_strategy_scope": True,
         "historical_news_labels_used": False,
@@ -2397,12 +3548,23 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "selection_validation_guard_used": True,
         "validation_optimized_pool_used": True,
         "conservative_regime_pool_used": True,
+        "walkforward_stability_pool_selection_used": True,
         "pool_execution_policy": "one_position_at_a_time",
         "selected_pool_size": len(selected_pool),
         "pool_raw_proposals": selected_result.signal_count,
         "pool_executed_trades": selected_result.trade_count,
         "pool_skipped_overlaps": selected_result.no_trade_count,
         "selection_validation": selection_validation_summary,
+        "target_feasibility_audit": target_feasibility_audit,
+        "target_feasibility_audit_version": TARGET_FEASIBILITY_AUDIT_VERSION,
+        "target_feasibility_assessment": target_feasibility_audit["assessment"],
+        "walkforward_regime_research": walkforward_regime_research,
+        "walkforward_regime_research_version": WALKFORWARD_REGIME_RESEARCH_VERSION,
+        "walkforward_stability_pool_selection_version": (
+            WALKFORWARD_STABILITY_POOL_SELECTION_VERSION
+        ),
+        "walkforward_regime_research_used_for_trade_decision": True,
+        "walkforward_stability_used_for_pool_selection": True,
         "derived_timeframes_available": derived_timeframes_available,
         "derived_timeframes_used_by_router": derived_timeframes_used_by_router,
         "used_timeframes": derived_features.used_timeframes,

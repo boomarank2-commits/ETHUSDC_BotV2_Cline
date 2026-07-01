@@ -4,17 +4,30 @@ Diese Datei ist nur der operative Plan. Die Prioritaet kommt aus `docs/CURRENT_T
 
 ## Current Priority
 
-Der alte Pool-Execution-Bug ist nicht mehr der naechste Auftrag. Der Pool-Overlap-Guard ist bereits aktiv.
+Der alte Pool-Execution-Bug ist nicht mehr der naechste Auftrag. Der
+Pool-Overlap-Guard ist aktiv.
+
+Der alte Datenanschluss-Auftrag ist ebenfalls nicht mehr der Engpass:
+ETHUSDC-Basisdaten, Kontextklines, Kline-Orderflow, aggTrade-Minutenfeatures
+und Derived Timeframes sind grundsaetzlich vorhanden bzw. im Backtestpfad
+anschliessbar.
 
 Aktueller Schwerpunkt:
 
-1. Vollstaendigen UI-/Controller-nahen Datenaufbau durchlaufen lassen.
-2. Sicherstellen, dass Smoke und Full denselben Daten-, Feature-, Router- und Simulationspfad nutzen.
-3. Reports auswerten: Datenstatus, Data Overview, HTF Training Edge Diagnostics.
-4. Training-only pruefen, welche Datenquellen Gewinner und Verlierer trennen.
-5. Erst danach einzelne belegte Metriken als Score-/Gate-Kandidat in den Router einbauen.
+1. Keine alten Research-Spuren weiter erzwingen:
+   Attempt 053, ERRO-L v1, ECMD-L v1 und EPX-L/R2-v2/R2-v3 sind nicht
+   integrationsfaehig.
+2. Eine neue ETH-spezifische Hypothese research-only pruefen, bevorzugt:
+   1h/4h-Regime-Pivot, neue Struktur-Reversal-Familie, laengerer
+   Kontextmarkt-Leadership-Ansatz oder Orderflow-Konfirmation.
+3. Training/Walkforward muss zuerst Ziel-vor-Stop, Kostenrobustheit,
+   Fold-Stabilitaet und genug Trades zeigen.
+4. Erst danach darf eine minimale Integration in den gemeinsamen
+   `activity_first_router` vorbereitet werden.
+5. Danach erst UI-Full-Backtest.
 
-Keine Datenquelle wird nur deshalb routerwirksam, weil sie heruntergeladen wurde.
+Keine Datenquelle und keine Strategie wird routerwirksam, nur weil sie
+heruntergeladen oder als Idee formuliert wurde.
 
 ## Phase 0 - Project Foundation
 

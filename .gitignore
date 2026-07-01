@@ -8,6 +8,7 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -15,6 +16,8 @@ htmlcov/
 /data/
 /reports/
 /logs/
+/data_upload/
+/docs-archive/
 *.csv
 *.parquet
 *.sqlite
