@@ -4,27 +4,38 @@ from array import array
 from bisect import bisect_left
 from dataclasses import asdict, replace
 
-from src.data.derived_timeframes import (
-    DerivedTimeframeFeatureSeries,
-    build_closed_timeframe_feature_series,
-    build_closed_timeframe_feature_snapshots,
-)
+import pandas as pd
+
+from src.data.agg_trade_data_ensure import load_agg_trade_data_status
 from src.data.agg_trade_feature_series import (
     AGG_TRADE_METRICS,
     AggTradeFeatureSeries,
     build_closed_agg_trade_feature_series,
 )
-from src.data.agg_trade_data_ensure import load_agg_trade_data_status
 from src.data.context_market_features import (
     CONTEXT_MARKET_METRICS,
     ContextMarketFeatureSeries,
     ContextMarketFeatureStore,
     build_closed_context_market_feature_store,
 )
+from src.data.derived_timeframes import (
+    DerivedTimeframeFeatureSeries,
+    build_closed_timeframe_feature_series,
+    build_closed_timeframe_feature_snapshots,
+)
 from src.data.kline_orderflow_features import (
     ORDERFLOW_METRICS,
     KlineOrderflowFeatureSeries,
     build_closed_kline_orderflow_feature_series,
+)
+from src.research.brh_v1 import _load_full_execution as _load_erem_execution
+from src.research.erem_exposure_edge_check import (
+    EREM_EXPOSURE_EDGE_VERSION,
+    EremConfig,
+    EremVariant,
+    _desired_exposure_changes,
+    calibrate_erem_thresholds,
+    simulate_erem_exposure,
 )
 
 from . import activity_first_router_report as _r
@@ -46,6 +57,9 @@ WALKFORWARD_ALL_POSITIVE_POLICY = (
 )
 WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS = 3
 WALKFORWARD_REGIME_FOLD_DAYS = 90
+EREM_DEFENSIVE_ROUTER_VERSION = "erem_defensive_router_v1_20260702"
+EREM_DEFENSIVE_VARIANT_ID = "erem_btc_drawdown_q35_or_ema_below0"
+EREM_MIN_TRAINING_DAYS = 60.0
 
 
 def _ceil(value):
@@ -850,7 +864,13 @@ def _build_walkforward_regime_research(
     }
 
 
-def _evaluate_training_candidates(candidates, candles, start_capital_reference, filters, progress_callback=None):
+def _evaluate_training_candidates(
+    candidates,
+    candles,
+    start_capital_reference,
+    filters,
+    progress_callback=None,
+):
     market = _r._MarketMetrics(candles)
     ordered = sorted(
         candidates,
@@ -993,7 +1013,10 @@ def _learn_htf_filter_candidates(evaluations, derived_features, htf_analysis):
                 "candidate_id": candidate.candidate_id,
                 "learned_from": "training_only",
                 "frozen_before_blindtest": True,
-                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+                "overfitting_risk": (
+                    "candidate-specific training threshold; requires "
+                    "blindtest confirmation"
+                ),
             }
         )
     return learned_candidates, learned_rules
@@ -1176,7 +1199,10 @@ def _learn_orderflow_filter_candidates(evaluations, candles):
                 "candidate_id": candidate.candidate_id,
                 "learned_from": "training_only",
                 "frozen_before_blindtest": True,
-                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+                "overfitting_risk": (
+                    "candidate-specific training threshold; requires "
+                    "blindtest confirmation"
+                ),
             }
         )
     return learned_candidates, learned_rules
@@ -1388,7 +1414,10 @@ def _learn_aggtrade_filter_candidates(evaluations, candles):
                 "candidate_id": candidate.candidate_id,
                 "learned_from": "training_only",
                 "frozen_before_blindtest": True,
-                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+                "overfitting_risk": (
+                    "candidate-specific training threshold; requires "
+                    "blindtest confirmation"
+                ),
             }
         )
     return learned_candidates, learned_rules
@@ -1604,7 +1633,10 @@ def _learn_context_market_filter_candidates(evaluations, candles, feature_store)
                 "candidate_id": candidate.candidate_id,
                 "learned_from": "training_only",
                 "frozen_before_blindtest": True,
-                "overfitting_risk": "candidate-specific training threshold; requires blindtest confirmation",
+                "overfitting_risk": (
+                    "candidate-specific training threshold; requires "
+                    "blindtest confirmation"
+                ),
             }
         )
     return learned_candidates, learned_rules
@@ -2670,9 +2702,15 @@ def _trade_rows_with_features(evaluations, derived_features, timeframe):
 def _candidate_for_future_feature(rows, close_return_split, range_pct_split):
     if len(rows) < 20:
         return False
-    if close_return_split["winner_minus_loser"] is not None and abs(close_return_split["winner_minus_loser"]) >= 0.001:
+    if (
+        close_return_split["winner_minus_loser"] is not None
+        and abs(close_return_split["winner_minus_loser"]) >= 0.001
+    ):
         return True
-    if range_pct_split["winner_minus_loser"] is not None and abs(range_pct_split["winner_minus_loser"]) >= 0.001:
+    if (
+        range_pct_split["winner_minus_loser"] is not None
+        and abs(range_pct_split["winner_minus_loser"]) >= 0.001
+    ):
         return True
     return False
 
@@ -2918,7 +2956,11 @@ def _aggregate_pool_result(
 def _search_pass_summary(evaluations, derived_features):
     rows = []
     for search_pass in sorted({evaluation.candidate.search_pass for evaluation in evaluations}):
-        current = [evaluation for evaluation in evaluations if evaluation.candidate.search_pass == search_pass]
+        current = [
+            evaluation
+            for evaluation in evaluations
+            if evaluation.candidate.search_pass == search_pass
+        ]
         best = max(current, key=lambda evaluation: evaluation.result.quote_per_day, default=None)
         rows.append(
             {
@@ -2934,7 +2976,9 @@ def _search_pass_summary(evaluations, derived_features):
                 "candidates_trade_allowed": sum(
                     1 for evaluation in current if evaluation.trade_allowed
                 ),
-                "best_candidate": _candidate_summary(best, derived_features) if best else None,
+                "best_candidate": (
+                    _candidate_summary(best, derived_features) if best else None
+                ),
             }
         )
     return rows
@@ -2951,15 +2995,268 @@ def _candidate_space_status(evaluations):
             "positive candidates exist but failed activity/cost/risk gates",
         )
     if any(evaluation.result.total_gross_pnl > 0 for evaluation in evaluations):
-        return "edge_after_fees_failed", "gross-positive candidates exist, but fees removed the edge"
+        return (
+            "edge_after_fees_failed",
+            "gross-positive candidates exist, but fees removed the edge",
+        )
     if any(_activity_ok(evaluation.result) for evaluation in evaluations):
         return "target_edge_missing", "active candidates exist, but no gross edge was found"
     if any(evaluation.result.trade_count > 0 for evaluation in evaluations):
-        return "target_activity_missing", "signals exist, but activity is below scaled activity gate"
+        return (
+            "target_activity_missing",
+            "signals exist, but activity is below scaled activity gate",
+        )
     return "no_active_candidates", "no candidate produced training trades"
 
 
-def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, profile="normal", progress_callback=None):
+def _erem_defensive_variant():
+    return EremVariant(
+        EREM_DEFENSIVE_VARIANT_ID,
+        btc_drawdown_quantile=0.35,
+        use_btc_ema_filter=True,
+    )
+
+
+def _erem_split_timestamps(split):
+    return (
+        pd.Timestamp(split.training_start),
+        pd.Timestamp(split.training_end),
+        pd.Timestamp(split.blindtest_start),
+        pd.Timestamp(split.blindtest_end),
+    )
+
+
+def _erem_disabled_result(reason, error=None):
+    return {
+        "available": False,
+        "selected": False,
+        "reason": reason,
+        "error": error,
+        "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
+        "variant_id": EREM_DEFENSIVE_VARIANT_ID,
+    }
+
+
+def _erem_exposure_trades(
+    execution,
+    variant,
+    thresholds,
+    start,
+    end,
+    config,
+):
+    frame = execution.loc[(execution.index >= start) & (execution.index <= end)]
+    if len(frame) < 2:
+        return []
+    changes = _desired_exposure_changes(execution, start, end, variant, thresholds)
+    opens = frame["open"].astype(float)
+    index = list(frame.index)
+    one_way_cost = config.one_way_cost_ret
+    equity = config.position_size_usdc
+    exposed = False
+    entry_time = None
+    entry_price = 0.0
+    entry_equity_before_cost = 0.0
+    trades = []
+
+    def close_trade(exit_time, exit_price, reason):
+        nonlocal equity
+        if entry_time is None or entry_price <= 0 or entry_equity_before_cost <= 0:
+            return
+        exit_value_before_cost = equity
+        exit_cost = exit_value_before_cost * one_way_cost
+        entry_cost = entry_equity_before_cost * one_way_cost
+        equity = exit_value_before_cost - exit_cost
+        price_return = exit_price / entry_price
+        gross_pnl = entry_equity_before_cost * (price_return - 1.0)
+        fees_paid = entry_cost + exit_cost
+        net_pnl = equity - entry_equity_before_cost
+        quantity = (entry_equity_before_cost - entry_cost) / entry_price
+        trades.append(
+            _r.ActivityFirstTrade(
+                entry_time=entry_time.isoformat(),
+                exit_time=exit_time.isoformat(),
+                entry_price=entry_price,
+                exit_price=exit_price,
+                stake_quote_amount=entry_equity_before_cost,
+                quantity=quantity,
+                gross_pnl=gross_pnl,
+                fees_paid=fees_paid,
+                net_pnl=net_pnl,
+                net_pnl_pct=(
+                    net_pnl / entry_equity_before_cost * 100
+                    if entry_equity_before_cost
+                    else 0.0
+                ),
+                exit_reason=reason,
+                family="erem_exposure_management",
+                candidate_id=EREM_DEFENSIVE_VARIANT_ID,
+                hold_minutes=int((exit_time - entry_time).total_seconds() // 60),
+            )
+        )
+
+    for pos in range(len(index) - 1):
+        now = index[pos]
+        current_open = float(opens.iloc[pos])
+        next_open = float(opens.iloc[pos + 1])
+        if now in changes and changes[now] != exposed:
+            if changes[now]:
+                entry_time = now
+                entry_price = current_open
+                entry_equity_before_cost = equity
+                equity *= 1.0 - one_way_cost
+            else:
+                close_trade(now, current_open, "erem_risk_off")
+                entry_time = None
+                entry_price = 0.0
+                entry_equity_before_cost = 0.0
+            exposed = changes[now]
+        if exposed:
+            equity *= next_open / current_open
+
+    if exposed:
+        close_trade(index[-1], float(opens.iloc[-1]), "erem_window_end")
+    return trades
+
+
+def _erem_result_from_trades(trades, start, end, stake_quote_amount):
+    total_gross = sum(trade.gross_pnl for trade in trades)
+    total_fees = sum(trade.fees_paid for trade in trades)
+    total_net = sum(trade.net_pnl for trade in trades)
+    days = max((end - start).total_seconds() / 86400.0, 1.0)
+    peak = stake_quote_amount
+    equity = stake_quote_amount
+    max_drawdown_pct = 0.0
+    for trade in trades:
+        equity += trade.net_pnl
+        peak = max(peak, equity)
+        if peak > 0:
+            max_drawdown_pct = max(max_drawdown_pct, (peak - equity) / peak * 100)
+    candidate = _r.ActivityFirstCandidate(
+        EREM_DEFENSIVE_VARIANT_ID,
+        "erem_exposure_management",
+        240,
+        0.0,
+        0.0,
+        0.0,
+        0,
+        0,
+        stake_quote_amount,
+        "erem_defensive_exposure",
+    )
+    return _r.ActivityFirstSimulationResult(
+        candidate,
+        stake_quote_amount,
+        stake_quote_amount + total_net,
+        total_gross,
+        total_fees,
+        total_net,
+        total_net / days,
+        len(trades),
+        len(trades) / days,
+        sum(1 for trade in trades if trade.net_pnl > 0),
+        sum(1 for trade in trades if trade.net_pnl < 0),
+        sum(1 for trade in trades if trade.net_pnl == 0),
+        max_drawdown_pct,
+        len(trades),
+        0,
+        0,
+        trades,
+    )
+
+
+def _build_erem_defensive_router_result(split, stake_quote_amount):
+    training_start, training_end, blindtest_start, blindtest_end = (
+        _erem_split_timestamps(split)
+    )
+    training_days = max((training_end - training_start).total_seconds() / 86400.0, 0.0)
+    if training_days < EREM_MIN_TRAINING_DAYS:
+        return _erem_disabled_result(
+            "training_window_too_short_for_erem_threshold_calibration"
+        )
+    try:
+        execution, _, _, _ = _load_erem_execution()
+        if execution.index.min() > training_start or execution.index.max() < blindtest_end:
+            return _erem_disabled_result("erem_execution_context_does_not_cover_split")
+        variant = _erem_defensive_variant()
+        config = EremConfig(position_size_usdc=stake_quote_amount)
+        thresholds = calibrate_erem_thresholds(
+            execution,
+            training_start,
+            training_end,
+            variant,
+        )
+        training_metrics = simulate_erem_exposure(
+            execution,
+            variant,
+            thresholds,
+            training_start,
+            training_end,
+            config,
+        )
+        blindtest_metrics = simulate_erem_exposure(
+            execution,
+            variant,
+            thresholds,
+            blindtest_start,
+            blindtest_end,
+            config,
+        )
+        trades = _erem_exposure_trades(
+            execution,
+            variant,
+            thresholds,
+            blindtest_start,
+            blindtest_end,
+            config,
+        )
+        result = _erem_result_from_trades(
+            trades,
+            blindtest_start,
+            blindtest_end,
+            stake_quote_amount,
+        )
+    except Exception as error:  # noqa: BLE001
+        return _erem_disabled_result("erem_router_integration_error", str(error))
+    setup = {
+        "candidate_id": EREM_DEFENSIVE_VARIANT_ID,
+        "strategy_family": "erem_exposure_management",
+        "selection_policy": "fixed_research_validated_defensive_exposure_mode",
+        "selected_by": "user_accepted_erem_drawdown_intermediate_goal",
+        "source_strategy_versions": [
+            EREM_EXPOSURE_EDGE_VERSION,
+            "erem_frozen_blindtest_20260702",
+        ],
+        "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
+        "blindtest_learning": False,
+        "thresholds": asdict(thresholds),
+        "training_metrics": training_metrics,
+        "blindtest_metrics": blindtest_metrics,
+        "trade_count": result.trade_count,
+        "quote_per_day": result.quote_per_day,
+        "max_drawdown": result.max_drawdown,
+    }
+    return {
+        "available": True,
+        "selected": True,
+        "reason": "erem_defensive_exposure_mode_selected_after_research_acceptance",
+        "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
+        "variant_id": EREM_DEFENSIVE_VARIANT_ID,
+        "thresholds": asdict(thresholds),
+        "training_metrics": training_metrics,
+        "blindtest_metrics": blindtest_metrics,
+        "result": result,
+        "setup": setup,
+    }
+
+
+def build_activity_first_router_report(
+    run_id,
+    split,
+    stake_quote_amount=100.0,
+    profile="normal",
+    progress_callback=None,
+):
     if split.symbol != _r.CONFIG.symbol:
         raise ValueError(f"symbol must be {_r.CONFIG.symbol}")
     start_capital = float(stake_quote_amount)
@@ -2989,7 +3286,9 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     if not derived_timeframes_available:
         missing_timeframe_reason = "no complete higher-timeframe candles in training window"
     elif not derived_timeframes_used_by_router:
-        missing_timeframe_reason = "no candidate training entry had a closed higher-timeframe feature"
+        missing_timeframe_reason = (
+            "no candidate training entry had a closed higher-timeframe feature"
+        )
     else:
         missing_timeframe_reason = None
     baseline_htf_analysis = _htf_training_edge_analysis(
@@ -3144,16 +3443,34 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     training_evaluation_by_candidate_id = {
         evaluation.candidate.candidate_id: evaluation for evaluation in evaluations
     }
-    validation_evaluation_by_candidate_id = {
-        evaluation.candidate.candidate_id: evaluation
-        for evaluation in validation_evaluations
-    }
-    best_activity = max(evaluations, key=lambda evaluation: evaluation.result.trades_per_day, default=None)
-    best_edge = max(evaluations, key=lambda evaluation: evaluation.result.quote_per_day, default=None)
-    best_balanced = max(evaluations, key=lambda evaluation: evaluation.balanced_score, default=None)
-    fee_survivors = [evaluation for evaluation in evaluations if evaluation.result.total_net_pnl > 0]
-    best_fee_survivor = max(fee_survivors, key=lambda evaluation: evaluation.result.quote_per_day, default=None)
-    best_target = min(evaluations, key=lambda evaluation: evaluation.target_distance, default=None)
+    best_activity = max(
+        evaluations,
+        key=lambda evaluation: evaluation.result.trades_per_day,
+        default=None,
+    )
+    best_edge = max(
+        evaluations,
+        key=lambda evaluation: evaluation.result.quote_per_day,
+        default=None,
+    )
+    best_balanced = max(
+        evaluations,
+        key=lambda evaluation: evaluation.balanced_score,
+        default=None,
+    )
+    fee_survivors = [
+        evaluation for evaluation in evaluations if evaluation.result.total_net_pnl > 0
+    ]
+    best_fee_survivor = max(
+        fee_survivors,
+        key=lambda evaluation: evaluation.result.quote_per_day,
+        default=None,
+    )
+    best_target = min(
+        evaluations,
+        key=lambda evaluation: evaluation.target_distance,
+        default=None,
+    )
     training_status, training_reason = _candidate_space_status(evaluations)
     if selected_pool:
         status = "trade_allowed_found"
@@ -3209,6 +3526,20 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             selection_reason = "internal_selection_validation_blocked_no_blindtest"
         else:
             selection_reason = "diagnostic_only_no_trade_allowed_candidate"
+    activity_pool_result_before_erem = selected_result
+    activity_pool_selected_setups_before_erem = list(selected_setups)
+    activity_pool_selection_reason_before_erem = selection_reason
+    erem_defensive = _build_erem_defensive_router_result(split, stake_quote_amount)
+    erem_selected = bool(erem_defensive.get("selected"))
+    if erem_selected:
+        selected_result = erem_defensive["result"]
+        selected_setups = [erem_defensive["setup"]]
+        status = "trade_allowed_found"
+        reason = (
+            "fixed EREM defensive exposure mode selected after research "
+            "validated drawdown/exposure management"
+        )
+        selection_reason = erem_defensive["reason"]
     daily = _r._daily_pnls(selected_result.trades)
     best_training_quote_per_day = max(
         (evaluation.result.quote_per_day for evaluation in evaluations),
@@ -3217,7 +3548,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
     target_ratio = selected_result.quote_per_day / _r.TARGET_QUOTE_PER_DAY
     target_status = (
         "blindtest_target_reached"
-        if selected_pool and selected_result.quote_per_day >= _r.TARGET_QUOTE_PER_DAY
+        if selected_setups and selected_result.quote_per_day >= _r.TARGET_QUOTE_PER_DAY
         else "target_not_reached"
     )
     target_feasibility_audit = _build_target_feasibility_audit(
@@ -3228,7 +3559,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         len(evaluations),
         len(allowed),
         len(validation_allowed),
-        len(selected_pool),
+        len(selected_setups),
     )
     walkforward_regime_research = _build_walkforward_regime_research(
         split.training_candles,
@@ -3468,7 +3799,45 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         ),
         "validation_pool_passed": validation_pool_passed,
         "validation_pool_rejection_reason": validation_pool_rejection,
-        "final_blindtest_pool_size": len(selected_pool),
+        "final_blindtest_pool_size": len(selected_setups),
+        "erem_defensive_mode_overrode_activity_pool": erem_selected,
+    }
+    erem_defensive_router_integration = {
+        "source": "erem_research_validated_exposure_management",
+        "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
+        "variant_id": EREM_DEFENSIVE_VARIANT_ID,
+        "source_available": bool(erem_defensive.get("available")),
+        "source_used": erem_selected,
+        "source_used_for_trade_decision": erem_selected,
+        "usage_mode": (
+            "fixed_defensive_exposure_mode_selected_by_user"
+            if erem_selected
+            else "not_selected"
+        ),
+        "training_only_thresholds": erem_defensive.get("thresholds"),
+        "training_metrics": erem_defensive.get("training_metrics"),
+        "blindtest_metrics": erem_defensive.get("blindtest_metrics"),
+        "blindtest_learning": False,
+        "changes_entry_filter": False,
+        "changes_trade_gates": False,
+        "changes_final_exposure_policy": erem_selected,
+        "reason": erem_defensive.get("reason"),
+        "error": erem_defensive.get("error"),
+        "activity_pool_candidate_space_before_erem": (
+            "trade_allowed_found" if selected_pool else training_status
+        ),
+        "activity_pool_selection_reason_before_erem": (
+            activity_pool_selection_reason_before_erem
+        ),
+        "activity_pool_selected_setup_count_before_erem": len(
+            activity_pool_selected_setups_before_erem
+        ),
+        "activity_pool_blindtest_quote_per_day_before_erem": (
+            activity_pool_result_before_erem.quote_per_day
+        ),
+        "activity_pool_blindtest_trade_count_before_erem": (
+            activity_pool_result_before_erem.trade_count
+        ),
     }
     rejection_summary = {
         "router_name": "activity_first_router",
@@ -3497,6 +3866,7 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "aggtrade_filter_integration": aggtrade_filter_integration,
         "context_market_training_edge_analysis": context_market_training_edge_analysis,
         "context_market_filter_integration": context_market_filter_integration,
+        "erem_defensive_router_integration": erem_defensive_router_integration,
         "htf_filter_integration": htf_filter_integration,
         "target_feasibility_audit": target_feasibility_audit,
         "walkforward_regime_research": walkforward_regime_research,
@@ -3506,32 +3876,51 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         ),
         "walkforward_regime_research_used_for_trade_decision": True,
         "walkforward_stability_used_for_pool_selection": True,
-        "best_activity_candidate": _candidate_summary(best_activity, derived_features) if best_activity else None,
-        "best_edge_candidate": _candidate_summary(best_edge, derived_features) if best_edge else None,
-        "best_balanced_candidate": _candidate_summary(best_balanced, derived_features) if best_balanced else None,
-        "best_fee_survivor_candidate": _candidate_summary(best_fee_survivor, derived_features) if best_fee_survivor else None,
-        "best_target_candidate": _candidate_summary(best_target, derived_features) if best_target else None,
+        "best_activity_candidate": (
+            _candidate_summary(best_activity, derived_features)
+            if best_activity
+            else None
+        ),
+        "best_edge_candidate": (
+            _candidate_summary(best_edge, derived_features) if best_edge else None
+        ),
+        "best_balanced_candidate": (
+            _candidate_summary(best_balanced, derived_features)
+            if best_balanced
+            else None
+        ),
+        "best_fee_survivor_candidate": (
+            _candidate_summary(best_fee_survivor, derived_features)
+            if best_fee_survivor
+            else None
+        ),
+        "best_target_candidate": (
+            _candidate_summary(best_target, derived_features) if best_target else None
+        ),
         "selected_trade_allowed_candidates": selected_setups,
         "selected_trade_allowed_candidate": selected_setups[0] if selected_setups else None,
-        "selected_pool_size": len(selected_pool),
+        "selected_pool_size": len(selected_setups),
+        "activity_pool_size_before_erem": len(activity_pool_selected_setups_before_erem),
         "pool_raw_proposals": selected_result.signal_count,
         "pool_executed_trades": selected_result.trade_count,
         "pool_skipped_overlaps": selected_result.no_trade_count,
         "target_feasibility_status": target_status,
         "target_feasibility_assessment": target_feasibility_audit["assessment"],
         "best_training_quote_per_day": best_training_quote_per_day,
-        "diagnostic_only": not selected_pool,
+        "diagnostic_only": not selected_setups,
         "selection_reason": selection_reason,
     }
     artifact = {
         "run_type": "unknown",
         "smoke_test_not_performance_proof": False,
         "live_release_allowed": False,
-        "diagnostic_only": not selected_pool,
-        "trade_allowed": bool(selected_pool),
-        "blindtest_strategy_executed": bool(selected_pool),
+        "diagnostic_only": not selected_setups,
+        "trade_allowed": bool(selected_setups),
+        "blindtest_strategy_executed": bool(selected_setups),
         "selection_policy": (
-            "selection_train_validation_walkforward_stability_pool_one_shared_account_context"
+            "erem_defensive_exposure_management_fixed_candidate"
+            if erem_selected
+            else "selection_train_validation_walkforward_stability_pool_one_shared_account_context"
         ),
         "selection_reason": selection_reason,
         "exchange_info_filters_used": filters is not None,
@@ -3550,7 +3939,8 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "conservative_regime_pool_used": True,
         "walkforward_stability_pool_selection_used": True,
         "pool_execution_policy": "one_position_at_a_time",
-        "selected_pool_size": len(selected_pool),
+        "selected_pool_size": len(selected_setups),
+        "activity_pool_size_before_erem": len(activity_pool_selected_setups_before_erem),
         "pool_raw_proposals": selected_result.signal_count,
         "pool_executed_trades": selected_result.trade_count,
         "pool_skipped_overlaps": selected_result.no_trade_count,
@@ -3574,7 +3964,9 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
             if htf_candidates
             else "candidate_entry_diagnostics_only_no_gate_or_score_change"
         ),
-        "derived_timeframe_training_edge_analysis_available": bool(derived_features.used_timeframes),
+        "derived_timeframe_training_edge_analysis_available": bool(
+            derived_features.used_timeframes
+        ),
         "derived_timeframes_used_for_trade_decision": bool(htf_candidates),
         "htf_filter_integration": htf_filter_integration,
         "kline_orderflow_available": orderflow_source_available,
@@ -3593,6 +3985,11 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         "context_markets_used_for_trade_decision": bool(context_candidates),
         "context_market_training_edge_analysis_available": True,
         "context_market_filter_integration": context_market_filter_integration,
+        "erem_defensive_exposure_mode_available": bool(
+            erem_defensive.get("available")
+        ),
+        "erem_defensive_exposure_mode_used": erem_selected,
+        "erem_defensive_router_integration": erem_defensive_router_integration,
     }
     return _r.ActivityFirstRouterReport(
         run_id,
@@ -3610,8 +4007,8 @@ def build_activity_first_router_report(run_id, split, stake_quote_amount=100.0, 
         reason,
         len(all_candidate_ids),
         len(evaluations),
-        len(validation_allowed) if validation_pool_passed else 0,
-        len(selected_pool),
+        1 if erem_selected else (len(validation_allowed) if validation_pool_passed else 0),
+        len(selected_setups),
         sum(1 for evaluation in evaluations if evaluation.rejection_reason),
         selected_setups,
         rejection_summary,

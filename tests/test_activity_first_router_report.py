@@ -1,8 +1,13 @@
-import src.router.activity_first_router_report as router_report_module
+import pandas as pd
+
 import src.data.agg_trade_feature_series as aggtrade_module
 import src.data.context_market_features as context_market_module
+import src.router as router_module
+import src.router.activity_first_router_report as router_report_module
 from src.data.candle_csv_io import save_candle_dataset_to_csv
 from src.data.candle_dataset import CandleDataset
+from src.data.candle_schema import Candle
+from src.data.context_market_features import build_closed_context_market_feature_store
 from src.data.data_catalog import CandleDataCatalogEntry
 from src.data.derived_timeframes import (
     DerivedTimeframeFeatureBuildResult,
@@ -11,10 +16,11 @@ from src.data.derived_timeframes import (
 from src.data.kline_orderflow_features import (
     build_closed_kline_orderflow_feature_series,
 )
-from src.data.candle_schema import Candle
 from src.data.train_blind_split import TrainBlindSplit
+from src.research.erem_exposure_edge_check import EremThresholds
 from src.router import (
     _aggregate_pool_result,
+    _build_erem_defensive_router_result,
     _filter_learning_eligible,
     _learn_aggtrade_filter_candidates,
     _learn_context_market_filter_candidates,
@@ -27,14 +33,13 @@ from src.router import (
     _walkforward_pool_order_key,
     _walkforward_stability_policy_rejection,
 )
-from src.data.context_market_features import build_closed_context_market_feature_store
 from src.router.activity_first_router_report import (
     ActivityFirstCandidate,
     ActivityFirstSimulationResult,
     ActivityFirstTrade,
     _TrainingEvaluation,
+    build_activity_first_router_report,
 )
-from src.router.activity_first_router_report import build_activity_first_router_report
 
 
 def _candle(index: int) -> Candle:
@@ -1330,3 +1335,75 @@ def test_walkforward_all_positive_policy_rejects_stable_with_negative_fold() -> 
         stable_candidates_available=True,
         all_positive_candidates_available=True,
     ) == "rejected_by_walkforward_all_positive_policy"
+
+
+def test_erem_defensive_router_result_uses_fixed_research_variant(monkeypatch) -> None:
+    index = pd.date_range(
+        "2025-01-01T00:00:00Z",
+        periods=70 * 24 + 8,
+        freq="h",
+        tz="UTC",
+    )
+    execution = pd.DataFrame(
+        {
+            "open": [100.0 + offset * 0.01 for offset in range(len(index))],
+            "brh_signal_update_bar": [True] * len(index),
+            "btc_4h_drawdown_from_20d_high": [-0.01] * len(index),
+            "btc_4h_close_vs_ema20": [0.01] * len(index),
+        },
+        index=index,
+    )
+    thresholds = EremThresholds(btc_drawdown_threshold=-0.02)
+
+    def fake_metrics(*_args, **_kwargs):
+        return {
+            "erem_pnl_usdc": 1.0,
+            "buy_hold_pnl_usdc": -2.0,
+            "erem_usdc_per_day": 0.1,
+            "buy_hold_usdc_per_day": -0.2,
+            "strategy_minus_buy_hold_usdc_per_day": 0.3,
+            "erem_maxdd_usdc": 1.0,
+            "buy_hold_maxdd_usdc": 4.0,
+            "erem_maxdd_pct": 0.01,
+            "buy_hold_maxdd_pct": 0.04,
+            "time_in_market_pct": 0.5,
+            "switch_count": 2,
+            "avoided_loss_blocks": [1.0],
+            "top1_avoided_block_share": 1.0,
+            "top2_avoided_block_share": 1.0,
+        }
+
+    monkeypatch.setattr(
+        router_module,
+        "_load_erem_execution",
+        lambda: (execution, index[0], index[-8], index[-1]),
+    )
+    monkeypatch.setattr(
+        router_module,
+        "calibrate_erem_thresholds",
+        lambda *_args, **_kwargs: thresholds,
+    )
+    monkeypatch.setattr(router_module, "simulate_erem_exposure", fake_metrics)
+    monkeypatch.setattr(
+        router_module,
+        "_desired_exposure_changes",
+        lambda *_args, **_kwargs: {index[-8]: True, index[-5]: False},
+    )
+    split = TrainBlindSplit(
+        symbol="ETHUSDC",
+        interval="1m",
+        training_candles=[],
+        blindtest_candles=[],
+        training_start=index[0].isoformat(),
+        training_end=index[-9].isoformat(),
+        blindtest_start=index[-8].isoformat(),
+        blindtest_end=index[-1].isoformat(),
+    )
+
+    result = _build_erem_defensive_router_result(split, 100.0)
+
+    assert result["selected"] is True
+    assert result["variant_id"] == "erem_btc_drawdown_q35_or_ema_below0"
+    assert result["setup"]["blindtest_learning"] is False
+    assert result["result"].candidate.family == "erem_exposure_management"
+    assert result["result"].trade_count == 1

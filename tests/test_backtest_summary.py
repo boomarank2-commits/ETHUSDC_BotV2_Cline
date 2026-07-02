@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from src.data.candle_schema import Candle
 from src.data.data_preparation_report import (
     DataPreparationReport,
@@ -8,7 +10,11 @@ from src.data.train_blind_split_report import (
     TrainBlindSplitReport,
     save_train_blind_split_report,
 )
-from src.reports.backtest_summary import build_backtest_summary, load_backtest_summary, save_backtest_summary
+from src.reports.backtest_summary import (
+    build_backtest_summary,
+    load_backtest_summary,
+    save_backtest_summary,
+)
 from src.router.activity_first_router_report import (
     build_activity_first_router_report,
     save_activity_first_router_report,
@@ -106,3 +112,41 @@ def test_summary_is_built_only_from_activity_first_router() -> None:
     assert summary.selected_family == "activity_first_router"
     assert load_backtest_summary(run_id) == summary
     assert path.is_file()
+
+
+def test_summary_surfaces_selected_setup_family() -> None:
+    run_id = "run_test_summary_selected_setup_family"
+    save_data_preparation_report(_data_report(run_id))
+    save_train_blind_split_report(_split_report(run_id))
+    candles = [_candle(index) for index in range(10)]
+    split = TrainBlindSplit(
+        symbol="ETHUSDC",
+        interval="1m",
+        training_candles=candles[:6],
+        blindtest_candles=candles[6:],
+        training_start=candles[0].open_time,
+        training_end=candles[5].open_time,
+        blindtest_start=candles[6].open_time,
+        blindtest_end=candles[9].open_time,
+    )
+    report = build_activity_first_router_report(run_id, split)
+    save_activity_first_router_report(
+        replace(
+            report,
+            selected_setups=[
+                {
+                    "candidate_id": "erem_btc_drawdown_q35_or_ema_below0",
+                    "strategy_family": "erem_exposure_management",
+                }
+            ],
+            trade_allowed_setup_count=1,
+            selected_candidate_count=1,
+            candidate_space_status="trade_allowed_found",
+            router_artifact={"diagnostic_only": False},
+        )
+    )
+
+    summary = build_backtest_summary(run_id)
+
+    assert summary.selected_family == "erem_exposure_management"
+    assert summary.selected_candidate_name == "erem_btc_drawdown_q35_or_ema_below0"

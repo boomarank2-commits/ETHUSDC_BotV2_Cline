@@ -9,15 +9,19 @@ Dieses Projekt ist ausschließlich fuer einen Zweck da:
 > Kandidatenpool entsteht und danach ein 365-Tage-Blindtest ohne Lernen zeigt,
 > ob diese Logik wirklich tragfaehig ist.
 
-Zielwert bleibt: mindestens `3.00 USDC/Tag` im 365-Tage-Blindtest bei
-`100 USDC` Einsatzbasis. Dieses Ziel darf nicht durch Blindtest-Lernen,
-Fake-Trades, Gate-Lockerung oder getrennte Backtestpfade erzwungen werden.
+Zielwert/Wunsch bleibt: mindestens `3.00 USDC/Tag` im 365-Tage-Blindtest bei
+`100 USDC` Einsatzbasis. Das ist kein Versprechen und darf nicht durch
+Blindtest-Lernen, Fake-Trades, Gate-Lockerung oder getrennte Backtestpfade
+erzwungen werden. Ein ehrlicher negativer oder defensiver Befund ist besser
+als ein schoengerechneter Backtest.
 
 ## Wichtigste Dateien
 
 - GPT/Codex-Fortsetzung: `docs/GPT_CONTINUATION_GUIDE_20260701.md`
 - Operativer Plan: `docs/IMPLEMENTATION_PLAN.md`
-- Aktuelle externe Frage: `docs/ARENA_AI_REQUEST_AFTER_WINDOW_SELECTION_EDGE_20260702.md`
+- Aktuelle UI-Full-Backtest-Freigabe: ja, aber nur zur Pruefung der neuen
+  EREM-defensiven Router-Integration; kein Live/Paper und keine Uebernahme
+  ohne positiven, plausiblen 365-Tage-Blindtest.
 - Kernregeln: `AGENTS.md`
 - Backtest-Vertrag: `specs/07_FINAL_ONE_YEAR_BLINDTEST_CONTRACT.md`
 
@@ -49,7 +53,9 @@ Wenn eine Datei widerspricht, gilt diese Reihenfolge:
 
 Kein Kandidat ist uebernahmefaehig.
 
-Die zuletzt untersuchten Research-Spuren sind bewusst nicht integriert:
+Die zuletzt untersuchten reinen Profit-Alpha-Spuren sind bewusst nicht
+integriert. EREM ist die einzige neue Router-Integration und dient zuerst als
+defensives ETH-Exposure-/Drawdown-Zwischenziel:
 
 - Attempt 053: nicht reproduziert.
 - ERRO-L v1: negativ, nicht integrieren.
@@ -83,17 +89,77 @@ Die zuletzt untersuchten Research-Spuren sind bewusst nicht integriert:
   Kandidat nach diesem Check ist wieder die alte v1-Auswahl
   `erv_risk_on_orderflow_cooldown_72h`, die bereits frozen blindgetestet
   wurde und nur schwach positiv war. Deshalb bleibt BRH-v1 archiviert.
+- BRH Selection Edge Robustness v2Check: strenger training-only Gatekeeper
+  wurde gebaut und lokal ausgefuehrt. Ergebnis:
+  `new_training_only_candidate_found`. Genau eine Variante besteht:
+  `brh_btc_risk_on_72h`. Das ist nicht die alte verbrauchte v1-Variante.
+  Dieser Befund erlaubt hoechstens einen separaten frozen Research-Blindtest
+  fuer genau diese Variante; noch keinen UI-Full-Backtest und keine
+  Router-Integration.
+- BRH BTC-Risk-On Frozen Blindtest: separater research-only Blindtest fuer
+  genau `brh_btc_risk_on_72h` wurde gebaut und lokal ausgefuehrt. Ergebnis:
+  positiv, aber nicht robust genug:
+  `+10.62 USDC`, `+0.029 USDC/Tag`, 26 Trades, PF ca. `1.26`, aber
+  Leave-two-out PF ca. `0.85` und Top-2-Gewinnkonzentration ca. `157.6%`.
+  Deshalb keine Router-Integration und kein UI-Full-Backtest.
+- EREM Exposure Edge Check + Frozen Blindtest + Router-Integration: BRH/ERV
+  wurde geschlossen und
+  als neues, anderes Research-Thema wurde ETH-Regime-Exposure-Management
+  geprueft: ETH halten, aber in BTC-Risk-Off-Phasen flach sein. Training-only
+  fand `erem_btc_drawdown_q35_or_ema_below0`; der frozen Blindtest bestaetigte
+  robust bessere Drawdown-Vermeidung als Buy-and-Hold. Ergebnis:
+  EREM `-0.53 USDC` vs. Buy-and-Hold `-37.00 USDC`, MaxDD `58.69` vs.
+  `140.05 USDC`, verteilte Avoided-Loss-Bloecke. Das ist kein 3-USDC/Tag-
+  Profit-Edge, aber ein robuster Exposure-/Drawdown-Befund. Nach Nutzer-
+  Klarstellung (`3 USDC` ist Wunsch, kein Versprechen) wurde genau dieser
+  Kandidat minimal in den gemeinsamen `activity_first_router` integriert:
+  `erem_defensive_router_v1_20260702`.
+- VEC-v1 Exhaustion Scan: weil der Nutzer ausdruecklich `3 USDC/Tag` Profit-
+  Alpha statt nur Exposure-Management will, wurde ein neuer Microstructure-
+  Alpha-Pfad getestet: Volume-Climax + Taker-Sell-Exhaustion + Reclaim auf
+  geschlossenen 15m/1h Bars, kalibriert nur in Training/Walkforward. Ergebnis:
+  `no_vec_training_edge`, 0/4 Varianten bestanden. Die wenigen positiven
+  Mini-Ergebnisse hatten nur 2-6 Trades und scheiterten an Mindesttrades,
+  Fold-Stabilitaet, Leave-two-out-PF, Top-2-Konzentration und Worst-Fold.
+  Deshalb keine frozen VEC-Blindtest-Freigabe, keine Router-Integration und
+  kein UI-Full-Backtest.
+- AFP-v1 Flow Persistence Scan: nach Arena.ai wurde als erste echte
+  aggTrade-Kernspur nicht Climax/Reversion, sondern anhaltende aggressive
+  Kauf-Flow-Persistenz getestet. Der Runner prueft zuerst Datenvollstaendigkeit
+  und dann einen Training-only Sanity-Kill-Switch, bevor Varianten ueberhaupt
+  simuliert werden. Ergebnis:
+  `afp_sanity_failed`, 0/6 Sanity-Folds bestanden. Die ETHUSDC
+  aggTrade-Minuten sind effektiv vollstaendig; 47.022 Minuten ohne
+  aggTrade-Zeile waren echte Null-Trade-Minuten aus den Klines und wurden als
+  Null-Flow behandelt. Das Top-Persistenz-Quintil hatte in allen Folds nach
+  Kosten negative Forward-PnL. Deshalb keine Varianten-Simulation, kein
+  frozen Blindtest, keine Router-Integration und kein UI-Full-Backtest.
 
 Konsequenz:
 
-- keinen neuen UI-Full-Backtest nur fuer diese toten Spuren starten;
+- keinen neuen UI-Full-Backtest nur fuer tote Profit-Alpha-Spuren starten;
 - R2-v2/R2-v3 nicht weiter ueber TP/SL/Hold/Gates erzwingen;
 - ERH-v1 nicht weiter ueber Gate-/Exit-/Hold-Tuning retten. Nach
   Next-Open-Korrektur ist der Befund klar negativ.
-- naechster sinnvoller Schritt ist nicht UI-Full-Backtest, sondern externe
-  Pruefung bzw. ein sehr kleiner research-only BRH/ERV-v2-Selection-Rule-
-  Schritt. Die v2 darf nur ohne neuen Blindtest starten und muss vorab
-  Konzentration, Selection-Bias und alte-v1-Wiederwahl bestrafen.
+- naechster sinnvoller Schritt ist nicht UI-Full-Backtest. Nach dem
+  schwach-positiven, aber fragilen BTC-Risk-On-Frozen-Blindtest sollte die
+  BRH/ERV-Linie nicht integriert werden. Wenn weitergearbeitet wird, dann nur
+  mit externer Re-Einschaetzung oder einem klar neuen Research-Thema; kein
+  weiteres Nachoptimieren auf diesen Blindtest.
+- EREM ist als defensives Zwischenziel jetzt minimal in den gemeinsamen
+  Routerpfad integriert. Der naechste UI-Full-Backtest ist deshalb sinnvoll,
+  aber nur zur ehrlichen Messung dieser defensiven Integration. Erwartung:
+  bessere Risiko-/Drawdown-Struktur; `3 USDC/Tag` bleibt Wunsch/Zielwert,
+  nicht Erwartung und nicht Patch-Versprechen.
+- VEC-v1 ist ebenfalls kein Uebernahmekandidat. Der naechste sinnvolle Schritt
+  ist eine externe Re-Einschaetzung oder ein neuer, klar abgegrenzter
+  Research-Scan, der echte aggTrade-Microstructure nutzt statt dieselbe
+  Kline-Orderflow-Idee mit gelockerten Gates zu wiederholen.
+- AFP-v1 hat diese echte aggTrade-Microstructure-Spur getestet und bereits im
+  Sanity-Kill-Switch verworfen. Der naechste Schritt ist nicht ein UI-Backtest
+  und nicht eine Gate-Lockerung. Sinnvoll ist jetzt entweder externe
+  Re-Einschaetzung mit dem AFP-Report oder die Auswertung des neuen EREM-
+  UI-Full-Backtests als defensives Zwischenziel.
 
 Aktueller Edge-Scan-Befund:
 
@@ -229,6 +295,195 @@ Interpretation:
 - Eine v2 ist nur als neuer research-only Selection-Rule-Runner erlaubt:
   ohne Blindtest, mit Konzentrationsstrafe, ohne alte-v1-Wiederwahl als neue
   Erfolgsmeldung und mit klaren Walkforward-Gates.
+
+Aktueller BRH Selection Edge Robustness v2Check:
+
+- Dateien:
+  - `src/research/brh_selection_edge_robustness_v2check.py`
+  - `scripts/run_brh_selection_edge_robustness_v2check.py`
+  - `tests/test_brh_selection_edge_robustness_v2check.py`
+- `strategy_version = brh_selection_edge_robustness_v2check_20260702`
+- `status = new_training_only_candidate_found`
+- rein training-only; kein neuer Blindtest; keine UI-/Router-Integration.
+- Der Check ergaenzt gegenueber dem einfachen Window-Selection-Check:
+  - deterministic random/unconditional ETH-72h-Baseline
+  - volle ETH Buy-and-Hold-Baseline fuer denselben Validation-Zeitraum
+  - Top-1/Top-2-Konzentrationsgrenzen
+  - Leave-one/two-out Profit Factor
+  - Mindestanzahl Trades
+  - PF-Obergrenze als Overfit-Schutz
+  - No-Repeat-Regel fuer bereits blindgetestete v1-Varianten
+- Ergebnis:
+  - `passing_variant_count = 1`
+  - passing/bester Kandidat: `brh_btc_risk_on_72h`
+  - nicht bereits in v1 blindgetestet
+  - 68 Validation-Trades
+  - Training/Walkforward-PnL ca. `+138.06 USDC`
+  - Training/Walkforward ca. `+0.251 USDC/Tag`
+  - PF ca. `2.36`
+  - Leave-one-out PF ca. `2.07`
+  - Leave-two-out PF ca. `1.89`
+  - Top-1 Share ca. `20.9%`
+  - Top-2 Share ca. `34.5%`
+  - Random-baseline trimmed Edge ca. `+1.49 USDC` je Fenster
+  - ETH Buy-and-Hold-Baseline ca. `+0.011 USDC/Tag`
+  - Strategie minus Buy-and-Hold ca. `+0.240 USDC/Tag`
+- Die alte v1-Auswahl `erv_risk_on_orderflow_cooldown_72h` besteht den
+  strengeren Check nicht:
+  - zu wenig Trades (`45 < 48`)
+  - worst Fold nicht positiv
+  - PF ueber Overfit-Obergrenze
+
+Interpretation:
+
+- BRH/ERV-v1 bleibt archiviert.
+- Der strengere Check findet keinen Grund, die alte Orderflow-v1 erneut zu
+  testen.
+- Es gibt aber eine breitere, einfachere Risk-On-Variante, die training-only
+  robust genug fuer genau einen spaeteren frozen Research-Blindtest sein kann.
+- Dieser Research-Blindtest ist noch nicht gebaut und darf keine Parameter
+  veraendern. UI-Full-Backtest bleibt verboten, bis ein Research-Blindtest
+  bestanden und bewusst zur Router-Integration freigegeben wurde.
+
+Aktueller BRH BTC-Risk-On Frozen Blindtest:
+
+- Dateien:
+  - `src/research/brh_btc_risk_on_frozen_blindtest.py`
+  - `scripts/run_brh_btc_risk_on_frozen_blindtest.py`
+  - `tests/test_brh_btc_risk_on_frozen_blindtest.py`
+- `strategy_version = brh_btc_risk_on_72h_frozen_blindtest_20260702`
+- `status = frozen_research_blindtest_completed`
+- rein research-only; keine Variantensuche; keine Parameteraenderung; keine
+  UI-/Router-Integration.
+- Kandidat:
+  - `brh_btc_risk_on_72h`
+  - aus dem strengen v2Check freigegeben
+  - nicht bereits in v1 blindgetestet
+- Frozen Blindtest:
+  - PnL ca. `+10.62 USDC`
+  - ca. `+0.029 USDC/Tag`
+  - 26 Trades
+  - PF ca. `1.26`
+  - Median Trade ca. `+0.49 USDC`
+  - Max Drawdown ca. `18.63 USDC`
+  - Leave-one-out PF ca. `1.01`
+  - Leave-two-out PF ca. `0.85`
+  - Top-1 Share ca. `97.7%`
+  - Top-2 Share ca. `157.6%`
+  - ETH Buy-and-Hold im selben Blindtest ca. `-35.84 USDC`
+  - Strategie minus Buy-and-Hold ca. `+0.127 USDC/Tag`
+- Entscheidung:
+  - `positive_blindtest_edge = true`
+  - `robust_blindtest_edge = false`
+  - `router_integration_allowed_now = false`
+  - `ui_full_backtest_allowed_now = false`
+
+Interpretation:
+
+- Der breite BTC-Risk-On-Kandidat ist besser als der alte BRH-v1-Kandidat und
+  besser als ETH Buy-and-Hold im Blindtest-Fenster.
+- Er ist aber immer noch sehr weit vom Ziel `3 USDC/Tag` entfernt.
+- Der Gewinn ist zu stark auf wenige Trades konzentriert; nach Entfernung der
+  zwei besten Trades kippt der PF unter 1.
+- Deshalb nicht integrieren, keinen UI-Full-Backtest starten und nicht durch
+  Nachoptimieren auf diesen Blindtest retten.
+
+Aktueller EREM Exposure Edge Check:
+
+- Dateien:
+  - `src/research/erem_exposure_edge_check.py`
+  - `scripts/run_erem_exposure_edge_check.py`
+  - `tests/test_erem_exposure_edge_check.py`
+- `strategy_version = erem_exposure_edge_check_20260702`
+- `status = erem_training_edge_found`
+- rein training-only; kein Blindtest; kein UI-/Router-Backtest.
+- Neues Ziel:
+  - nicht Trade-Alpha pro Entry;
+  - sondern ETH-Exposure reduzieren, wenn BTC-Risk-Off erkannt wird;
+  - Erfolg relativ zu ETH Buy-and-Hold und Drawdown, nicht absolut zu
+    `3 USDC/Tag`.
+- Bester Training-only Kandidat:
+  - `erem_btc_drawdown_q35_or_ema_below0`
+  - EREM Training/Walkforward ca. `+117.65 USDC`
+  - Buy-and-Hold in denselben Folds ca. `+12.51 USDC`
+  - Strategie minus Buy-and-Hold ca. `+0.163 USDC/Tag`
+  - 5/6 Folds mit Return-Verbesserung
+  - 6/6 Folds mit Drawdown-Verbesserung
+  - Time-in-market ca. `40.7%`
+  - Top-1 avoided-loss share ca. `8.4%`
+  - Top-2 avoided-loss share ca. `15.3%`
+- Damit war genau ein frozen EREM-Research-Blindtest erlaubt.
+
+Aktueller EREM Frozen Blindtest:
+
+- Dateien:
+  - `src/research/erem_frozen_blindtest.py`
+  - `scripts/run_erem_frozen_blindtest.py`
+  - `tests/test_erem_frozen_blindtest.py`
+- `strategy_version = erem_frozen_blindtest_20260702`
+- `status = erem_frozen_blindtest_completed`
+- Kandidat:
+  - `erem_btc_drawdown_q35_or_ema_below0`
+  - keine Variantensuche
+  - keine Parameteraenderung
+  - urspruenglich keine UI-/Router-Integration im Research-Run
+- Frozen Blindtest:
+  - EREM PnL ca. `-0.53 USDC`
+  - ETH Buy-and-Hold ca. `-37.00 USDC`
+  - Strategie minus Buy-and-Hold ca. `+0.100 USDC/Tag`
+  - EREM MaxDD ca. `58.69 USDC`
+  - Buy-and-Hold MaxDD ca. `140.05 USDC`
+  - Time-in-market ca. `34.9%`
+  - Top-1 avoided-loss share ca. `36.2%`
+  - Top-2 avoided-loss share ca. `46.5%`
+- Entscheidung:
+  - `return_not_worse_than_buy_hold = true`
+  - `drawdown_better_than_buy_hold = true`
+  - `top1_avoided_block_concentration_ok = true`
+  - `return_to_maxdd_ratio_better_than_buy_hold = true`
+  - `robust_blindtest_edge = true`
+  - `router_integration_allowed_now = true`
+  - `ui_full_backtest_allowed_now = false` im reinen Research-Report
+
+Interpretation:
+
+- EREM bestaetigt keine 3-USDC/Tag-Profit-Strategie.
+- EREM bestaetigt aber robustes Drawdown-/Exposure-Management gegenueber
+  passivem ETH-Halten.
+- Der Nutzer hat danach klargestellt, dass `3 USDC/Tag` ein Wunsch/Zielwert
+  und kein Versprechen ist. Deshalb wurde EREM als defensives Zwischenziel
+  akzeptiert.
+- EREM wurde danach minimal in den gemeinsamen Routerpfad integriert:
+  `erem_defensive_router_v1_20260702`.
+- Der aktuelle UI-Full-Backtest sieht EREM jetzt. Er soll als naechster
+  Volltest gestartet werden, um dieselbe 730/365-Logik im echten
+  Backtestpfad zu pruefen. Keine Uebernahme ohne plausibel positiven Report.
+
+Aktuelle EREM-Router-Integration:
+
+- Datei:
+  - `src/router/__init__.py`
+- Version:
+  - `erem_defensive_router_v1_20260702`
+- Kandidat:
+  - `erem_btc_drawdown_q35_or_ema_below0`
+- Familie:
+  - `erem_exposure_management`
+- Regeln:
+  - nur Training kalibriert Thresholds;
+  - Blindtest bleibt eingefroren;
+  - keine Variantensuche im Blindtest;
+  - keine alten BRH/ERV/VEC/AFP-Gates werden gelockert;
+  - Smoke/Full bleiben derselbe Routerpfad.
+- Report-Sichtbarkeit:
+  - `router_artifact.erem_defensive_router_integration`
+  - `rejection_summary.erem_defensive_router_integration`
+  - `selected_setups[0].strategy_family = erem_exposure_management`
+  - UI-Summary zeigt diese Setup-Familie statt sie hinter
+    `activity_first_router` zu verstecken.
+- Short-Smokes koennen EREM deaktivieren, wenn zu wenig Trainingsdauer fuer
+  die Training-only Kalibrierung vorhanden ist. Das ist kein zweiter Pfad,
+  sondern derselbe Pfad mit zu kurzem Fenster.
 
 ## Datenwahrheit
 

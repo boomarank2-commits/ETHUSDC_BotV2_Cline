@@ -96,9 +96,14 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
         diagnostic_only = bool(activity_report.router_artifact.get("diagnostic_only"))
         if activity_report.blindtest_quote_per_day >= TARGET_QUOTE_PER_DAY and not diagnostic_only:
             target_status = "blindtest_target_reached"
+        selected_family = "activity_first_router"
         selected_name = None
         if activity_report.selected_setups:
-            selected_name = str(activity_report.selected_setups[0].get("candidate_id"))
+            selected_setup = activity_report.selected_setups[0]
+            selected_name = str(selected_setup.get("candidate_id"))
+            selected_family = str(
+                selected_setup.get("strategy_family") or selected_family
+            )
         if diagnostic_only:
             message = "Activity First Router diagnostic completed - no trade_allowed candidate"
         else:
@@ -126,7 +131,7 @@ def build_backtest_summary(run_id: str) -> BacktestSummary:
             usable_for_backtest=True,
             message=message,
             quote_per_day=activity_report.blindtest_quote_per_day,
-            selected_family="activity_first_router",
+            selected_family=selected_family,
             selected_candidate_name=selected_name,
             positive_days=activity_report.positive_days,
             negative_days=activity_report.negative_days,

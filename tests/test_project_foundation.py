@@ -13,6 +13,8 @@ def test_required_project_files_exist():
         "docs/GPT_CONTINUATION_GUIDE_20260701.md",
         "docs/IMPLEMENTATION_PLAN.md",
         "docs/ARENA_AI_REQUEST_AFTER_WINDOW_SELECTION_EDGE_20260702.md",
+        "docs/ARENA_AI_REQUEST_AFTER_VEC_V1_20260702.md",
+        "docs/ARENA_AI_REQUEST_AFTER_AFP_V1_20260702.md",
         "memory-bank/projectbrief.md",
         "memory-bank/productContext.md",
         "memory-bank/activeContext.md",
@@ -55,7 +57,8 @@ def test_single_truth_docs_contain_core_rules():
 
     assert "activity_first_router" in guide
     assert "Smoke und Full muessen denselben Pfad verwenden" in guide
-    assert "Keine UI/Router-Integration von BRH-v1" in implementation_plan
+    assert "BRH/ERV nicht weiter anfassen" in implementation_plan
+    assert "minimale EREM-Router-Integration" in implementation_plan
 
 
 def test_archive_is_not_truth():
