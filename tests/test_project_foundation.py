@@ -10,12 +10,9 @@ def test_required_project_files_exist():
         "README.md",
         "requirements.txt",
         "pyproject.toml",
-        "docs/MASTER_TRUTH.md",
-        "docs/BACKTEST_TRUTH.md",
-        "docs/ROUTER_TRUTH.md",
-        "docs/DATA_TRUTH.md",
-        "docs/UI_TRUTH.md",
+        "docs/GPT_CONTINUATION_GUIDE_20260701.md",
         "docs/IMPLEMENTATION_PLAN.md",
+        "docs/ARENA_AI_REQUEST_AFTER_WINDOW_SELECTION_EDGE_20260702.md",
         "memory-bank/projectbrief.md",
         "memory-bank/productContext.md",
         "memory-bank/activeContext.md",
@@ -35,27 +32,32 @@ def test_required_project_files_exist():
     assert missing == []
 
 
-def test_master_truth_contains_core_rules():
-    master_truth = (PROJECT_ROOT / "docs" / "MASTER_TRUTH.md").read_text(encoding="utf-8")
-    backtest_truth = (PROJECT_ROOT / "docs" / "BACKTEST_TRUTH.md").read_text(encoding="utf-8")
-    router_truth = (PROJECT_ROOT / "docs" / "ROUTER_TRUTH.md").read_text(encoding="utf-8")
+def test_single_truth_docs_contain_core_rules():
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (
+        PROJECT_ROOT / "docs" / "GPT_CONTINUATION_GUIDE_20260701.md"
+    ).read_text(encoding="utf-8")
+    implementation_plan = (
+        PROJECT_ROOT / "docs" / "IMPLEMENTATION_PLAN.md"
+    ).read_text(encoding="utf-8")
 
-    assert "ETHUSDC" in master_truth
-    assert "USDC" in master_truth
-    assert "LONG only" in master_truth
-    assert "No short" in master_truth
-    assert "No futures" in master_truth
-    assert "No margin" in master_truth
-    assert "No leverage" in master_truth
+    assert "ETHUSDC" in readme
+    assert "USDC" in readme
+    assert "LONG-only" in readme
+    assert "Kein Short" in readme
+    assert "Futures" in readme
+    assert "Margin" in readme
+    assert "Leverage" in readme
 
-    assert "730 days training" in backtest_truth
-    assert "365 days blindtest" in backtest_truth
-    assert "no early stop" in backtest_truth.lower()
-    assert "negative calculated results must remain visible" in backtest_truth.lower()
+    assert "730 Tagen Training" in readme
+    assert "365-Tage-Blindtest" in readme
+    assert "Blindtest-Lernen" in readme
 
-    assert "Situation -> Cluster -> Router -> Setup -> Trade" in router_truth
+    assert "activity_first_router" in guide
+    assert "Smoke und Full muessen denselben Pfad verwenden" in guide
+    assert "Keine UI/Router-Integration von BRH-v1" in implementation_plan
 
 
 def test_archive_is_not_truth():
-    master_truth = (PROJECT_ROOT / "docs" / "MASTER_TRUTH.md").read_text(encoding="utf-8")
-    assert "Old READMEs, old reports, old code and old bot folders are not truth." in master_truth
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "Alte verstreute Truth-/Arena-/Patch-Dateien wurden entfernt" in readme

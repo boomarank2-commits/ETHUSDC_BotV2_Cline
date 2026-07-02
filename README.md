@@ -1,6 +1,6 @@
 # ETHUSDC Bot V2 - einzige Arbeitswahrheit
 
-Stand: 2026-07-01.
+Stand: 2026-07-02.
 
 Dieses Projekt ist ausschließlich fuer einen Zweck da:
 
@@ -16,18 +16,22 @@ Fake-Trades, Gate-Lockerung oder getrennte Backtestpfade erzwungen werden.
 ## Wichtigste Dateien
 
 - GPT/Codex-Fortsetzung: `docs/GPT_CONTINUATION_GUIDE_20260701.md`
+- Operativer Plan: `docs/IMPLEMENTATION_PLAN.md`
+- Aktuelle externe Frage: `docs/ARENA_AI_REQUEST_AFTER_WINDOW_SELECTION_EDGE_20260702.md`
 - Kernregeln: `AGENTS.md`
 - Backtest-Vertrag: `specs/07_FINAL_ONE_YEAR_BLINDTEST_CONTRACT.md`
-- Basistruth-Dateien: `docs/MASTER_TRUTH.md`, `docs/BACKTEST_TRUTH.md`,
-  `docs/DATA_TRUTH.md`, `docs/ROUTER_TRUTH.md`, `docs/UI_TRUTH.md`
+
+Alte verstreute Truth-/Arena-/Patch-Dateien wurden entfernt. Die aktuelle
+Wahrheit steht bewusst nur noch in wenigen Dateien, damit GPT/Codex nicht
+zwischen alten Zwischenstaenden hin- und herspringt.
 
 Wenn eine Datei widerspricht, gilt diese Reihenfolge:
 
 1. `README.md`
 2. `AGENTS.md`
 3. `docs/GPT_CONTINUATION_GUIDE_20260701.md`
-4. `specs/`
-5. alte Hintergrundnotizen
+4. `docs/IMPLEMENTATION_PLAN.md`
+5. `specs/`
 
 ## Aktueller technischer Stand
 
@@ -68,6 +72,17 @@ Die zuletzt untersuchten Research-Spuren sind bewusst nicht integriert:
   genau einen frozen Blindtest. Der Blindtest war leicht positiv, aber weit
   vom Ziel entfernt: `+4.65 USDC` gesamt, `+0.013 USDC/Tag`, 22 Trades.
   BRH/ERV-v1 ist deshalb nicht uebernahmefaehig und nicht UI-ready.
+- BRH-v1-DIAG: Post-Mortem-Diagnose wurde gebaut und ausgefuehrt.
+  Ergebnis: keine Threshold-Leakage, aber deutliche Gewinnkonzentration und
+  Fragilitaet. Aktuelle BRH-v1-Form archivieren; keine BRH-v2 ohne externe
+  neue, training-only begruendete Spezifikation.
+- BRH Window Selection Edge Check: neuer training-only Pre-v2-Check wurde
+  gebaut und lokal ausgefuehrt. Ergebnis: `window_selection_edge_found`.
+  BRH/ERV-v1 hat im Training tatsaechlich bessere ETH-Exposure-Fenster
+  selektiert als ein einfacher BTC-Risk-On-Baseline-Hold. Aber: bester
+  Kandidat nach diesem Check ist wieder die alte v1-Auswahl
+  `erv_risk_on_orderflow_cooldown_72h`, die bereits frozen blindgetestet
+  wurde und nur schwach positiv war. Deshalb bleibt BRH-v1 archiviert.
 
 Konsequenz:
 
@@ -75,9 +90,10 @@ Konsequenz:
 - R2-v2/R2-v3 nicht weiter ueber TP/SL/Hold/Gates erzwingen;
 - ERH-v1 nicht weiter ueber Gate-/Exit-/Hold-Tuning retten. Nach
   Next-Open-Korrektur ist der Befund klar negativ.
-- naechster sinnvoller Schritt ist nicht UI-Full-Backtest, sondern BRH/ERV-v1
-  diagnostizieren: Warum waren Walkforward-Folds stark, aber der frozen
-  Blindtest nur schwach positiv? Keine weitere Blindtest-Optimierung.
+- naechster sinnvoller Schritt ist nicht UI-Full-Backtest, sondern externe
+  Pruefung bzw. ein sehr kleiner research-only BRH/ERV-v2-Selection-Rule-
+  Schritt. Die v2 darf nur ohne neuen Blindtest starten und muss vorab
+  Konzentration, Selection-Bias und alte-v1-Wiederwahl bestrafen.
 
 Aktueller Edge-Scan-Befund:
 
@@ -136,6 +152,83 @@ Interpretation: BRH/ERV-v1 beweist, dass der Edge-Scan nicht komplett leer war.
 Aber die Trainingsstaerke generalisiert zu schwach. Das darf nicht durch
 Auswahlwechsel nach Blindtest, Gate-Lockerung oder zweiten Blindtest
 "repariert" werden.
+
+Aktueller BRH-v1-DIAG-Befund:
+
+- Dateien:
+  - `src/research/brh_v1_diagnostics.py`
+  - `scripts/run_brh_v1_diagnostics.py`
+  - `tests/test_brh_v1_diagnostics.py`
+- `strategy_version = brh_v1_attribution_decay_diagnostics_20260702`
+- `status = diagnostic_complete`
+- Die Blindtest-Quantile wurden gegen Recalculation geprueft:
+  `thresholds_training_only = true`.
+- Kein klarer Risk-On-Verfuegbarkeits-Kollaps:
+  Risk-On-Bars/Tag Blind vs. Training ca. `0.64`.
+- Kein klarer 72h-Horizon-Decay:
+  Im Blindtest waren 6h/12h/24h/36h/48h im Mittel schlechter als 72h.
+- Hauptproblem: PnL-Konzentration / Fragilitaet.
+  - Training selected variant:
+    - 45 Trades
+    - total ca. `+135.41 USDC`
+    - Median Trade ca. `+1.95 USDC`
+    - Top-2 Trades ca. `36.9%` des Gesamt-PnL
+    - Leave-two-out PF ca. `2.86`
+  - Blindtest selected variant:
+    - 22 Trades
+    - total ca. `+4.65 USDC`
+    - Median Trade ca. `-0.37 USDC`
+    - Top-1 Trade ca. `337%` des Gesamt-PnL
+    - Top-2 Trades ca. `572%` des Gesamt-PnL
+    - Leave-one-out PF ca. `0.76`
+    - Leave-two-out PF ca. `0.53`
+- Same-window ETH Attribution:
+  fixed Spot-Long hat innerhalb eines gewaehlten Fensters kein eigenes Alpha;
+  der Edge kann nur aus besserer Auswahl der ETH-Exposure-Fenster kommen.
+
+Interpretation: Der leicht positive Blindtest ist nicht stabil genug. BRH-v1
+darf nicht in UI/Router integriert werden. Eine v2 ist nur erlaubt, wenn eine
+neue training-only Spezifikation vorliegt, die Konzentration/Selection-Bias
+vor dem Blindtest bestraft. Kein zweiter Blindtest auf alten Varianten.
+
+Aktueller BRH Window Selection Edge Check:
+
+- Dateien:
+  - `src/research/brh_window_selection_edge.py`
+  - `scripts/run_brh_window_selection_edge_check.py`
+  - `tests/test_brh_window_selection_edge.py`
+- `strategy_version = brh_window_selection_edge_check_20260702`
+- `status = window_selection_edge_found`
+- rein training-only; kein neuer Blindtest; keine UI-/Router-Integration.
+- Frage des Checks:
+  Selektiert BRH-v1 innerhalb derselben Training/Walkforward-Folds bessere
+  ETHUSDC-72h-Exposure-Fenster als ein einfacher BTC-Risk-On-Baseline-Hold?
+- Ergebnis:
+  - `passing_variant_count = 3`
+  - bester Kandidat:
+    `erv_risk_on_orderflow_cooldown_72h`
+  - selected-window mean ca. `+2.52 USDC` je 100-USDC-Fenster
+  - all-risk-on baseline mean ca. `+1.08 USDC`
+  - non-overlap-risk-on baseline mean ca. `+2.03 USDC`
+  - window-selection edge ca. `+1.44 USDC`
+  - non-overlap edge ca. `+0.49 USDC`
+  - positive Edge-Folds: `6/6`
+  - worst Fold Edge ca. `+0.15 USDC`
+- Zwei weitere Varianten bestehen knapp mit `5/6` positiven Edge-Folds:
+  - `erv_risk_on_ethbtc_dip_72h`
+  - `erv_risk_on_any_eth_dip_72h`
+
+Interpretation:
+
+- BRH/ERV ist nicht komplett leer; die Window-Auswahl hat training-only
+  messbaren Mehrwert gegen eine naive Risk-On-Baseline.
+- Trotzdem ist der beste Kandidat exakt die alte v1-Auswahl. Dieser Kandidat
+  wurde bereits frozen blindgetestet und hat nur `+0.013 USDC/Tag` erreicht.
+- Deshalb kein neuer UI-Full-Backtest und kein zweiter Blindtest auf dieser
+  alten Variante.
+- Eine v2 ist nur als neuer research-only Selection-Rule-Runner erlaubt:
+  ohne Blindtest, mit Konzentrationsstrafe, ohne alte-v1-Wiederwahl als neue
+  Erfolgsmeldung und mit klaren Walkforward-Gates.
 
 ## Datenwahrheit
 

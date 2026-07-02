@@ -404,38 +404,196 @@ Interpretation:
 
 Naechster kleinster sinnvoller Schritt:
 
-BRH/ERV-v1 diagnostizieren, nicht sofort neue Strategie bauen:
+Dieser Schritt wurde umgesetzt. Siehe BRH-v1-DIAG unten.
+
+## 9. Aktueller Research-Schritt: BRH-v1-DIAG
+
+Aus den drei externen Antworten wurde eine kombinierte Diagnose gebaut:
+
+- Agentenmodus/Antwort 3 als Basis:
+  - Train-vs-Blind Decay
+  - Distribution Shift
+  - 72h Horizon-/MFE-/MAE-Profil
+  - Orderflow-Filter-Overfit
+- Antwort 2 ergaenzt:
+  - Same-window ETH Attribution / `signal_minus_eth`
+- Antwort 1 ergaenzt:
+  - Konzentration, Leave-one/two-out PF, Selection-Bias
+
+Dateien:
+
+- `src/research/brh_v1_diagnostics.py`
+- `scripts/run_brh_v1_diagnostics.py`
+- `tests/test_brh_v1_diagnostics.py`
+
+Regeln:
+
+- rein diagnostisch;
+- keine Strategieparameter geaendert;
+- keine neue Variante ausgewaehlt;
+- kein zweiter Varianten-Blindtest;
+- kein UI-/Router-Backtest;
+- verwendet den vorhandenen BRH-v1-Report und das vorhandene Validation-
+  Trade-Ledger.
+
+Lokaler Run:
+
+- `strategy_version = brh_v1_attribution_decay_diagnostics_20260702`
+- `status = diagnostic_complete`
+- `selected_variant_id = erv_risk_on_orderflow_cooldown_72h`
+- Output:
+  `reports/research/brh_v1_diag/brh_v1_diagnostic_report.json`
+
+Kernaussagen:
+
+- Threshold-Verifikation:
+  - Blindtest-Quantile passen exakt zur training-only Recalculation.
+  - `thresholds_training_only = true`
+  - Damit kein stiller Quantile-Lookahead gefunden.
+- Distribution Shift:
+  - Risk-On-Bars/Tag Blind vs. Training ca. `0.639`.
+  - Das ist weniger, aber kein harter <50%-Regimekollaps.
+- Horizon Decay:
+  - Im Blindtest waren kuerzere Horizonte nicht besser.
+  - 72h Mean PnL je Trade ca. `+0.211 USDC`.
+  - 24h Mean PnL je Trade ca. `-0.830 USDC`.
+  - Deshalb kein klarer Beleg, dass nur die starre 72h-Haltezeit das Problem
+    ist.
+- Same-window ETH Attribution:
+  - `signal_minus_same_window_eth` ist praktisch `0`.
+  - Das ist erwartbar: BRH ist fixed Spot-Long im ausgewaehlten Fenster.
+  - Ein Edge kann nur aus besserer Auswahl der ETH-Exposure-Fenster kommen,
+    nicht aus Alpha innerhalb des Fensters.
+- Konzentration / Fragilitaet:
+  - Training selected variant:
+    - 45 Trades
+    - total ca. `+135.41 USDC`
+    - Median Trade ca. `+1.95 USDC`
+    - Top-2 Trades ca. `36.9%` des Gesamt-PnL
+    - Leave-two-out PF ca. `2.86`
+  - Blindtest selected variant:
+    - 22 Trades
+    - total ca. `+4.65 USDC`
+    - Median Trade ca. `-0.37 USDC`
+    - Top-1 Trade ca. `337%` des Gesamt-PnL
+    - Top-2 Trades ca. `572%` des Gesamt-PnL
+    - Leave-one-out PF ca. `0.76`
+    - Leave-two-out PF ca. `0.53`
+- Selection Forensics:
+  - BRH-v1 Auswahlregel war `highest_training_profit_factor_then_pnl`.
+  - Fold-Winner wechselten zwischen mehreren Varianten.
+  - Max pairwise Entry-Jaccard ca. `0.75`, mean ca. `0.146`.
+
+Interpretation:
+
+- BRH-v1 war methodisch sauberer als fruehere Spuren.
+- Der leicht positive Blindtest ist aber nicht robust genug.
+- Das Hauptproblem ist nicht nachweislich 72h-Horizon-Decay, sondern
+  Blindtest-PnL-Konzentration / geringe Stichprobe / Selection-Fragilitaet.
+- Aktuelle BRH-v1-Form bleibt archiviert und nicht integrationsfaehig.
+
+Dieser Schritt wurde umgesetzt. Siehe BRH Window Selection Edge Check unten.
+
+## 10. Aktueller Research-Schritt: BRH Window Selection Edge Check
+
+Aus den externen Antworten wurde nicht sofort BRH-v2 gebaut. Stattdessen wurde
+zuerst eine engere training-only Frage geprueft:
 
 ```text
-BRH-v1-DIAG:
-Train-vs-Blind decay / regime-distribution shift / threshold stability
+Hat BRH-v1 im Training/Walkforward bessere ETHUSDC-Exposure-Fenster selektiert
+als ein einfacher BTC-Risk-On-Baseline-Hold innerhalb derselben Folds?
 ```
 
-Zu pruefen:
+Dateien:
 
-- Haben sich die BTC-Risk-On-Thresholds im Blindtest anders verteilt?
-- Waren Blindtest-Trades zu stark von wenigen Gewinnern abhaengig?
-- Sind 72h-Holds im Blindtest wegen anderer Volatilitaet/Trendstruktur
-  zerfallen?
-- Ist Orderflow-Cooldown als Auswahlkriterium stabil oder nur Training-PF-
-  Overfit?
-- Haette eine andere Auswahlregel vor Blindtest rationaler sein koennen?
-  Achtung: nicht nachtraeglich auf Blindtest optimieren, nur fuer eine neue
-  zukuenftige Hypothese dokumentieren.
+- `src/research/brh_window_selection_edge.py`
+- `scripts/run_brh_window_selection_edge_check.py`
+- `tests/test_brh_window_selection_edge.py`
 
-## 9. Arena.ai Auftrag
+Regeln:
+
+- rein training-only;
+- verwendet vorhandenen BRH-v1-Report und Validation-Trade-Ledger;
+- verwendet nur Markt-/Fold-Daten vor dem Blindtest;
+- kein neuer Blindtest;
+- keine neue Varianten-Auswahl fuer UI/Router;
+- keine Strategieparameter aendern;
+- Baseline ist einfacher BTC-Risk-On 72h Hold innerhalb derselben Validation-
+  Folds;
+- Entry/Exit bleiben lookahead-sicher: Signal auf geschlossener Row, Entry am
+  naechsten Open, Exit nach `hold_hours`.
+
+Lokaler Run:
+
+- `strategy_version = brh_window_selection_edge_check_20260702`
+- `status = window_selection_edge_found`
+- `passing_variant_count = 3`
+- Output:
+  `reports/research/brh_window_selection_edge/brh_window_selection_edge_report.json`
+
+Bester training-only Kandidat nach Window-Selection-Edge:
+
+```text
+variant_id = erv_risk_on_orderflow_cooldown_72h
+selected_window_mean_pnl_usdc ~= +2.521
+baseline_all_risk_on_mean_pnl_usdc ~= +1.084
+baseline_non_overlap_risk_on_mean_pnl_usdc ~= +2.030
+window_selection_edge_after_cost_usdc ~= +1.438
+non_overlap_selection_edge_after_cost_usdc ~= +0.491
+folds_with_positive_selection_edge = 6
+worst_fold_selection_edge_after_cost_usdc ~= +0.147
+```
+
+Weitere passing Varianten:
+
+- `erv_risk_on_ethbtc_dip_72h`
+  - Edge gegen all-risk-on ca. `+1.393 USDC`
+  - positive Edge-Folds: `5`
+  - worst Fold ca. `-0.264 USDC`
+- `erv_risk_on_any_eth_dip_72h`
+  - Edge gegen all-risk-on ca. `+1.425 USDC`
+  - positive Edge-Folds: `5`
+  - worst Fold ca. `-0.264 USDC`
+
+Interpretation:
+
+- BRH/ERV ist nicht wertlos: die Window-Auswahl hatte im Training messbaren
+  Mehrwert gegen naive BTC-Risk-On-Exposure.
+- Aber der beste Kandidat ist wieder exakt die alte v1-Auswahl
+  `erv_risk_on_orderflow_cooldown_72h`.
+- Diese alte v1-Auswahl wurde bereits frozen blindgetestet und war nur schwach
+  positiv (`+4.65 USDC`, ca. `+0.013 USDC/Tag`).
+- Deshalb darf daraus kein neuer UI-Full-Backtest und kein zweiter Blindtest
+  entstehen.
+
+Naechster kleinster sinnvoller Schritt:
+
+Nicht direkt UI-Backtest starten. Entweder:
+
+1. externe Hilfe mit dem aktuellen Prompt fragen; oder
+2. einen neuen BRH/ERV-v2 Selection-Rule-Research-Runner bauen, aber nur wenn
+   er strikt training-only bleibt und vor jedem Blindtest:
+   - alte-v1-Wiederwahl nicht als neuen Erfolg zaehlt;
+   - Konzentration bestraft;
+   - Selection-Bias bestraft;
+   - genug Trades pro Fold verlangt;
+   - robust gegen Top-1/Top-2-Trade-Entfernung bleibt;
+   - genau dokumentiert, wann ueberhaupt ein spaeterer frozen Blindtest
+     erlaubt waere.
+
+## 11. Arena.ai Auftrag
 
 Wenn externe Hilfe genutzt wird, verwende als aktuellen Prompt:
 
 ```text
-docs/ARENA_AI_REQUEST_AFTER_BRH_V1_20260701.md
+docs/ARENA_AI_REQUEST_AFTER_WINDOW_SELECTION_EDGE_20260702.md
 ```
 
 Die Antwort darf nicht blind eingebaut werden. Waehle den besseren Vorschlag,
 begruende warum, baue ihn minimal research-only, und stoppe wieder, wenn die
 Evidenz nicht reicht.
 
-## 10. Uebergabeformat nach jedem Patch
+## 12. Uebergabeformat nach jedem Patch
 
 Am Ende immer berichten:
 

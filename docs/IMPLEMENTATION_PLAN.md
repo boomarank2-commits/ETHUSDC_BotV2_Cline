@@ -1,6 +1,7 @@
 # IMPLEMENTATION_PLAN
 
-Diese Datei ist nur der operative Plan. Die Prioritaet kommt aus `docs/CURRENT_TRUTH_MAP.md`.
+Diese Datei ist nur der operative Plan. Die Prioritaet kommt aus `README.md`
+und `docs/GPT_CONTINUATION_GUIDE_20260701.md`.
 
 ## Current Priority
 
@@ -26,14 +27,23 @@ Aktueller Schwerpunkt:
 4. `ERV/BRH-v1 = BTC-Risk-On ETH 72h Hold + ETHBTC/ETH-Dip-Reversion-Filter`
    wurde research-only gebaut. Training/Walkforward war stark, aber der frozen
    Blindtest nur schwach positiv: ca. `+0.013 USDC/Tag`.
-5. Naechster Schritt ist BRH-v1-DIAG: Train-vs-Blind decay,
-   Regime-Distribution-Shift und Threshold-Stabilitaet analysieren. Kein
-   zweiter Blindtest und kein Auswahlwechsel auf Basis des Blindtests.
-6. Training/Walkforward muss zuerst Ziel-vor-Stop, Kostenrobustheit,
+5. BRH-v1-DIAG wurde gebaut. Ergebnis: keine Threshold-Leakage, kein klarer
+   72h-Horizon-Decay, aber starke Blindtest-PnL-Konzentration und Fragilitaet.
+   Aktuelle BRH-v1-Form bleibt archiviert.
+6. BRH Window Selection Edge Check wurde gebaut. Ergebnis:
+   `window_selection_edge_found`, 3 passing Varianten. Die alte v1-Auswahl
+   `erv_risk_on_orderflow_cooldown_72h` ist weiterhin bester training-only
+   Window-Selector gegen die naive BTC-Risk-On-Baseline. Weil genau diese
+   Variante bereits frozen blindgetestet wurde und nur schwach positiv war,
+   bleibt sie archiviert.
+7. Keine BRH-v2 ohne neue Spezifikation, die ausschliesslich training-only
+   begruendet, wie Konzentration und Selection-Bias vor dem Blindtest bestraft
+   werden.
+8. Training/Walkforward muss zuerst Ziel-vor-Stop, Kostenrobustheit,
    Fold-Stabilitaet und genug Trades zeigen.
-7. Erst danach darf eine minimale Integration in den gemeinsamen
+9. Erst danach darf eine minimale Integration in den gemeinsamen
    `activity_first_router` vorbereitet werden.
-8. Danach erst UI-Full-Backtest.
+10. Danach erst UI-Full-Backtest.
 
 Keine Datenquelle und keine Strategie wird routerwirksam, nur weil sie
 heruntergeladen oder als Idee formuliert wurde.
@@ -77,13 +87,20 @@ Implemented:
   Basis-Features und Forward-Horizonte 1h/4h/12h/24h/72h
 - research-only BRH/ERV-v1 Walkforward mit 72h fixed hold, foldweise
   kalibrierten Quantilen, Next-Open Entry und one-position-at-a-time
+- research-only BRH-v1-DIAG fuer Threshold-Verifikation, Distribution Shift,
+  Horizon Decay, Konzentration und Selection-Forensics
+- research-only BRH Window Selection Edge Check gegen einfache BTC-Risk-On-
+  Baseline innerhalb derselben Training/Walkforward-Folds
 
 Next:
 
-- BRH-v1-DIAG bauen: erklaeren, warum 5/7 Varianten im Walkforward eligible
-  waren, der eingefrorene Blindtest aber nur schwach positiv war.
-- Keine UI/Router-Integration von BRH-v1, solange die Generalisierung nicht
-  deutlich naeher an das Ziel kommt.
+- Keine UI/Router-Integration von BRH-v1.
+- Externe Hilfe nur noch mit
+  `docs/ARENA_AI_REQUEST_AFTER_WINDOW_SELECTION_EDGE_20260702.md`.
+- Eine naechste v2 darf nur als neue research-only Spezifikation entstehen,
+  wenn sie ohne Blindtest-Lernen Konzentration/Selection-Bias im Training
+  bestraft, alte-v1-Wiederwahl nicht als neuen Erfolg zaehlt und genau
+  definiert, wann ein spaeterer frozen Blindtest erlaubt waere.
 - Spread/depth only after at least 30 real days of validated local collection.
 
 ## Phase 4 - Training Layer
