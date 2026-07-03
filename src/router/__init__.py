@@ -37,6 +37,15 @@ from src.research.erem_exposure_edge_check import (
     calibrate_erem_thresholds,
     simulate_erem_exposure,
 )
+from src.research.erem_hysteresis_frozen_blindtest import (
+    EREM_HYSTERESIS_FROZEN_VERSION,
+)
+from src.research.erem_hysteresis_minhold_scan import (
+    EREM_HYSTERESIS_MINHOLD_VERSION,
+    EremHysteresisVariant,
+    hysteresis_exposure_changes,
+    simulate_erem_hysteresis,
+)
 
 from . import activity_first_router_report as _r
 
@@ -57,8 +66,13 @@ WALKFORWARD_ALL_POSITIVE_POLICY = (
 )
 WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS = 3
 WALKFORWARD_REGIME_FOLD_DAYS = 90
-EREM_DEFENSIVE_ROUTER_VERSION = "erem_defensive_router_v1_1_hourly_aligned_20260702"
-EREM_DEFENSIVE_VARIANT_ID = "erem_btc_drawdown_q35_or_ema_below0"
+EREM_DEFENSIVE_ROUTER_VERSION = (
+    "erem_defensive_router_v1_2_hysteresis_minhold_20260703"
+)
+EREM_BASE_VARIANT_ID = "erem_btc_drawdown_q35_or_ema_below0"
+EREM_DEFENSIVE_VARIANT_ID = "erem_minhold_exp48_flat12"
+EREM_HYSTERESIS_MIN_EXPOSED_HOURS = 48
+EREM_HYSTERESIS_MIN_FLAT_HOURS = 12
 EREM_MIN_TRAINING_DAYS = 60.0
 EREM_MAX_SPLIT_ALIGNMENT_GAP = pd.Timedelta(hours=2)
 
@@ -3012,9 +3026,17 @@ def _candidate_space_status(evaluations):
 
 def _erem_defensive_variant():
     return EremVariant(
-        EREM_DEFENSIVE_VARIANT_ID,
+        EREM_BASE_VARIANT_ID,
         btc_drawdown_quantile=0.35,
         use_btc_ema_filter=True,
+    )
+
+
+def _erem_hysteresis_overlay():
+    return EremHysteresisVariant(
+        EREM_DEFENSIVE_VARIANT_ID,
+        min_exposed_hours=EREM_HYSTERESIS_MIN_EXPOSED_HOURS,
+        min_flat_hours=EREM_HYSTERESIS_MIN_FLAT_HOURS,
     )
 
 
@@ -3072,11 +3094,19 @@ def _erem_exposure_trades(
     start,
     end,
     config,
+    exposure_changes=None,
+    candidate_id=None,
+    risk_off_exit_reason="erem_risk_off",
 ):
     frame = execution.loc[(execution.index >= start) & (execution.index <= end)]
     if len(frame) < 2:
         return []
-    changes = _desired_exposure_changes(execution, start, end, variant, thresholds)
+    changes = (
+        exposure_changes
+        if exposure_changes is not None
+        else _desired_exposure_changes(execution, start, end, variant, thresholds)
+    )
+    trade_candidate_id = candidate_id or EREM_DEFENSIVE_VARIANT_ID
     opens = frame["open"].astype(float)
     index = list(frame.index)
     one_way_cost = config.one_way_cost_ret
@@ -3118,7 +3148,7 @@ def _erem_exposure_trades(
                 ),
                 exit_reason=reason,
                 family="erem_exposure_management",
-                candidate_id=EREM_DEFENSIVE_VARIANT_ID,
+                candidate_id=trade_candidate_id,
                 hold_minutes=int((exit_time - entry_time).total_seconds() // 60),
             )
         )
@@ -3134,7 +3164,7 @@ def _erem_exposure_trades(
                 entry_equity_before_cost = equity
                 equity *= 1.0 - one_way_cost
             else:
-                close_trade(now, current_open, "erem_risk_off")
+                close_trade(now, current_open, risk_off_exit_reason)
                 entry_time = None
                 entry_price = 0.0
                 entry_equity_before_cost = 0.0
@@ -3153,6 +3183,8 @@ def _erem_result_from_trades(
     end,
     stake_quote_amount,
     mark_to_market_max_drawdown_pct=None,
+    candidate_id=None,
+    search_pass="erem_hysteresis_defensive_exposure",
 ):
     total_gross = sum(trade.gross_pnl for trade in trades)
     total_fees = sum(trade.fees_paid for trade in trades)
@@ -3167,7 +3199,7 @@ def _erem_result_from_trades(
         if peak > 0:
             max_drawdown_pct = max(max_drawdown_pct, (peak - equity) / peak * 100)
     candidate = _r.ActivityFirstCandidate(
-        EREM_DEFENSIVE_VARIANT_ID,
+        candidate_id or EREM_DEFENSIVE_VARIANT_ID,
         "erem_exposure_management",
         240,
         0.0,
@@ -3176,7 +3208,7 @@ def _erem_result_from_trades(
         0,
         0,
         stake_quote_amount,
-        "erem_defensive_exposure",
+        search_pass,
     )
     return _r.ActivityFirstSimulationResult(
         candidate,
@@ -3239,6 +3271,7 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
                 requested_blindtest_end=blindtest_end.isoformat(),
             )
         variant = _erem_defensive_variant()
+        overlay = _erem_hysteresis_overlay()
         config = EremConfig(position_size_usdc=stake_quote_amount)
         thresholds = calibrate_erem_thresholds(
             execution,
@@ -3246,7 +3279,7 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
             training_window["end"],
             variant,
         )
-        training_metrics = simulate_erem_exposure(
+        base_training_metrics = simulate_erem_exposure(
             execution,
             variant,
             thresholds,
@@ -3254,13 +3287,39 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
             training_window["end"],
             config,
         )
-        blindtest_metrics = simulate_erem_exposure(
+        base_blindtest_metrics = simulate_erem_exposure(
             execution,
             variant,
             thresholds,
             blindtest_window["start"],
             blindtest_window["end"],
             config,
+        )
+        training_metrics = simulate_erem_hysteresis(
+            execution,
+            variant,
+            thresholds,
+            overlay,
+            training_window["start"],
+            training_window["end"],
+            config,
+        )
+        blindtest_metrics = simulate_erem_hysteresis(
+            execution,
+            variant,
+            thresholds,
+            overlay,
+            blindtest_window["start"],
+            blindtest_window["end"],
+            config,
+        )
+        blindtest_exposure_changes = hysteresis_exposure_changes(
+            execution,
+            blindtest_window["start"],
+            blindtest_window["end"],
+            variant,
+            thresholds,
+            overlay,
         )
         trades = _erem_exposure_trades(
             execution,
@@ -3269,6 +3328,9 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
             blindtest_window["start"],
             blindtest_window["end"],
             config,
+            exposure_changes=blindtest_exposure_changes,
+            candidate_id=EREM_DEFENSIVE_VARIANT_ID,
+            risk_off_exit_reason="erem_hysteresis_risk_off",
         )
         result = _erem_result_from_trades(
             trades,
@@ -3276,17 +3338,22 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
             blindtest_window["end"],
             stake_quote_amount,
             float(blindtest_metrics.get("erem_maxdd_pct", 0.0)) * 100.0,
+            candidate_id=EREM_DEFENSIVE_VARIANT_ID,
         )
     except Exception as error:  # noqa: BLE001
         return _erem_disabled_result("erem_router_integration_error", str(error))
     setup = {
         "candidate_id": EREM_DEFENSIVE_VARIANT_ID,
         "strategy_family": "erem_exposure_management",
-        "selection_policy": "fixed_research_validated_defensive_exposure_mode",
-        "selected_by": "user_accepted_erem_drawdown_intermediate_goal",
+        "selection_policy": "fixed_research_validated_hysteresis_exposure_mode",
+        "selected_by": "frozen_erem_hysteresis_blindtest_positive",
+        "base_variant_id": EREM_BASE_VARIANT_ID,
+        "hysteresis_overlay": asdict(overlay),
         "source_strategy_versions": [
             EREM_EXPOSURE_EDGE_VERSION,
             "erem_frozen_blindtest_20260702",
+            EREM_HYSTERESIS_MINHOLD_VERSION,
+            EREM_HYSTERESIS_FROZEN_VERSION,
         ],
         "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
         "blindtest_learning": False,
@@ -3313,6 +3380,9 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
         },
         "training_metrics": training_metrics,
         "blindtest_metrics": blindtest_metrics,
+        "base_training_metrics_before_hysteresis": base_training_metrics,
+        "base_blindtest_metrics_before_hysteresis": base_blindtest_metrics,
+        "blindtest_hysteresis_exposure_change_count": len(blindtest_exposure_changes),
         "trade_count": result.trade_count,
         "quote_per_day": result.quote_per_day,
         "max_drawdown": result.max_drawdown,
@@ -3320,9 +3390,13 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
     return {
         "available": True,
         "selected": True,
-        "reason": "erem_defensive_exposure_mode_selected_after_research_acceptance",
+        "reason": (
+            "erem_hysteresis_exposure_mode_selected_after_frozen_research_blindtest"
+        ),
         "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
         "variant_id": EREM_DEFENSIVE_VARIANT_ID,
+        "base_variant_id": EREM_BASE_VARIANT_ID,
+        "hysteresis_overlay": asdict(overlay),
         "thresholds": asdict(thresholds),
         "requested_training_window": setup["requested_training_window"],
         "aligned_training_window": setup["aligned_training_window"],
@@ -3330,6 +3404,8 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
         "aligned_blindtest_window": setup["aligned_blindtest_window"],
         "training_metrics": training_metrics,
         "blindtest_metrics": blindtest_metrics,
+        "base_training_metrics_before_hysteresis": base_training_metrics,
+        "base_blindtest_metrics_before_hysteresis": base_blindtest_metrics,
         "result": result,
         "setup": setup,
     }
@@ -3621,8 +3697,8 @@ def build_activity_first_router_report(
         selected_setups = [erem_defensive["setup"]]
         status = "trade_allowed_found"
         reason = (
-            "fixed EREM defensive exposure mode selected after research "
-            "validated drawdown/exposure management"
+            "fixed EREM hysteresis exposure mode selected after training-only "
+            "scan plus frozen blindtest improved the prior defensive mode"
         )
         selection_reason = erem_defensive["reason"]
     daily = _r._daily_pnls(selected_result.trades)
@@ -3891,11 +3967,13 @@ def build_activity_first_router_report(
         "source": "erem_research_validated_exposure_management",
         "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
         "variant_id": EREM_DEFENSIVE_VARIANT_ID,
+        "base_variant_id": erem_defensive.get("base_variant_id"),
+        "hysteresis_overlay": erem_defensive.get("hysteresis_overlay"),
         "source_available": bool(erem_defensive.get("available")),
         "source_used": erem_selected,
         "source_used_for_trade_decision": erem_selected,
         "usage_mode": (
-            "fixed_defensive_exposure_mode_selected_by_user"
+            "fixed_hysteresis_exposure_mode_after_frozen_research_blindtest"
             if erem_selected
             else "not_selected"
         ),
@@ -3906,6 +3984,12 @@ def build_activity_first_router_report(
         "aligned_blindtest_window": erem_defensive.get("aligned_blindtest_window"),
         "training_metrics": erem_defensive.get("training_metrics"),
         "blindtest_metrics": erem_defensive.get("blindtest_metrics"),
+        "base_training_metrics_before_hysteresis": erem_defensive.get(
+            "base_training_metrics_before_hysteresis"
+        ),
+        "base_blindtest_metrics_before_hysteresis": erem_defensive.get(
+            "base_blindtest_metrics_before_hysteresis"
+        ),
         "blindtest_learning": False,
         "changes_entry_filter": False,
         "changes_trade_gates": False,
@@ -4007,7 +4091,7 @@ def build_activity_first_router_report(
         "trade_allowed": bool(selected_setups),
         "blindtest_strategy_executed": bool(selected_setups),
         "selection_policy": (
-            "erem_defensive_exposure_management_fixed_candidate"
+            "erem_hysteresis_exposure_management_fixed_candidate"
             if erem_selected
             else "selection_train_validation_walkforward_stability_pool_one_shared_account_context"
         ),

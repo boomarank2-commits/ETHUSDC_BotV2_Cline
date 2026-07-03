@@ -918,17 +918,52 @@ Echter UI-Full-Run nach Fix:
 - Danach gepatcht:
   - EREM-Router-Result verwendet mark-to-market Drawdown aus
     `blindtest_metrics.erem_maxdd_pct`.
-  - UI-Label `Kein robuster Kandidat` wurde zu
-    `Kein freigegebener Router-Kandidat`.
+  - Das UI-Label `Kein robuster Kandidat` blieb unveraendert, weil die
+    UI-Datei alte Ruff-Zeilenlaengen-Verstoesse enthaelt und nicht fuer reine
+    Textkosmetik breit umgebaut wurde.
+
+Post-Mortem nach externen Antworten:
+
+- Umgesetzt:
+  - `src/research/erem_postmortem_cycle_scan.py`
+  - `scripts/run_erem_postmortem_cycle_scan.py`
+  - `tests/test_erem_postmortem_cycle_scan.py`
+- Version:
+  - `erem_postmortem_cycle_scan_20260703`
+- Output:
+  - `reports/research/erem_postmortem_cycle_scan/erem_postmortem_cycle_scan_report.json`
+- Status:
+  - `erem_cycle_participation_failed`
+- Full-Cycle-Ergebnis:
+  - EREM PnL ca. `+134.94 USDC`
+  - Buy-and-Hold PnL ca. `-13.72 USDC`
+  - EREM Calmar ca. `0.250`
+  - Buy-and-Hold Calmar ca. `-0.028`
+  - Bull-Participation ca. `67.7%`
+  - Bear-Loss-Avoidance ca. `66.1%`
+  - EREM/BuyHold-MaxDD-Ratio ca. `75.9%`
+- Warum formal failed:
+  - Das strenge Kriterium `EREM MaxDD < 60% von Buy-and-Hold MaxDD` scheitert.
+- Switch-Kosten:
+  - Full Cycle: ca. `590` Switches, Kostenimpact ca. `214.81 USDC`
+  - Blindtest: ca. `200` Switches, Kostenimpact ca. `22.28 USDC`
+  - Blindtest zero-cost EREM ca. `+12.77 USDC`; real nach Kosten ca.
+    `-9.51 USDC`
+- Entscheidung:
+  - Kein UI-Full-Backtest.
+  - Keine Router-Aenderung.
+  - EREM nicht uebernehmen.
+  - Wenn EREM weiter untersucht wird, dann nur als separater research-only
+    Hysterese-/Mindesthaltezeit-Scan gegen Switch-Kosten.
 
 Naechster kleinster sinnvoller Schritt:
 
 ```text
-Keinen weiteren Full-Backtest derselben EREM-Logik starten. Externe/Arena-
-Analyse mit dem echten EREM-Full-Befund fragen oder einen neuen, klar
-abgegrenzten research-only Profit-Alpha-Scan bauen. EREM bleibt als defensive
-Benchmark/Overlay-Idee erhalten, aber nicht als uebernahmefaehige Strategie.
-3 USDC/Tag bleibt Wunsch/Zielwert, kein Patch-Versprechen.
+Keinen weiteren Full-Backtest derselben EREM-Logik starten. Naechster kleiner
+Schritt ist entweder ein research-only Hysterese-/Mindesthaltezeit-Scan gegen
+Switch-Kosten oder danach ein neuer, klar abgegrenzter Profit-Alpha-
+Existenzscan (BTC->ETH Lead-Lag oder OIA). 3 USDC/Tag bleibt Wunsch/Zielwert,
+kein Patch-Versprechen.
 ```
 
 ## 15. Research-Schritt: VEC-v1 Exhaustion Scan
@@ -1148,42 +1183,107 @@ Sinnvoller ist eine Kosten-/Machbarkeitsanalyse oder die Entscheidung,
 EREM als robustes Exposure-/Drawdown-Zwischenziel zu integrieren/veredeln.
 ```
 
-## 17. Naechster Auftrag: EREM-UI-Full-Backtest
+## 17. Aktueller Stand: EREM-Hysteresis v1.2 nach echtem UI-Full-Backtest
 
-Aktuell ist ein UI-Full-Backtest wieder sinnvoll, aber nur fuer eine klar
-begrenzte Frage:
+Der EREM-UI-Full-Backtest wurde inzwischen ausgefuehrt und danach gezielt
+verbessert.
 
-```text
-Hat die neue EREM-defensive Router-Integration im echten 730/365-Backtestpfad
-eine bessere Risiko-/Drawdown-Struktur und wenigstens einen plausiblen
-positiven/neutralen Blindtest als reines ETH-Exposure?
-```
-
-Der naechste menschliche Schritt ist:
+Basis-EREM v1.1:
 
 ```text
-UI oeffnen -> Full-Backtest starten -> neuen Reportordner an Codex/GPT geben.
+Run: run_20260703_100717
+Kandidat: erem_btc_drawdown_q35_or_ema_below0
+Ergebnis: ca. -9.51 USDC
+Gewinn/Tag: ca. -0.026 USDC/Tag
+Bewertung: defensiver als ETH Buy-and-Hold, aber absolut negativ.
 ```
 
-Danach pruefen:
+Forensik danach:
 
-- `activity_first_router_report.json`
-- `router_artifact.erem_defensive_router_integration`
-- `selected_setups`
-- `blindtest_total_net_pnl`
-- `blindtest_quote_per_day`
-- `blindtest_max_drawdown`
-- Trade-Anzahl und Tagesverteilung
+```text
+erem_postmortem_cycle_scan_20260703
+Full-Cycle EREM: ca. +134.94 USDC
+Full-Cycle Buy-and-Hold: ca. -13.72 USDC
+Blindtest zero-cost EREM: ca. +12.77 USDC
+Blindtest real EREM: ca. -9.51 USDC
+Befund: EREM hat Cycle-/Exposure-Wert, aber Switch-Kosten/Churn sind der
+Engpass.
+```
 
-Wichtig:
+Training-only Hysteresis-/Min-Hold-Scan:
+
+```text
+Datei: src/research/erem_hysteresis_minhold_scan.py
+Script: scripts/run_erem_hysteresis_minhold_scan.py
+Test: tests/test_erem_hysteresis_minhold_scan.py
+Version: erem_hysteresis_minhold_scan_20260703
+Status: erem_hysteresis_training_candidate_found
+Passing Varianten: 1 / 16
+Kandidat: erem_minhold_exp48_flat12
+Regel: mindestens 48h exposed bleiben, mindestens 12h flat bleiben
+```
+
+Frozen Research-Blindtest:
+
+```text
+Datei: src/research/erem_hysteresis_frozen_blindtest.py
+Script: scripts/run_erem_hysteresis_frozen_blindtest.py
+Test: tests/test_erem_hysteresis_frozen_blindtest.py
+Version: erem_hysteresis_frozen_blindtest_20260703
+Basis-EREM Blindtest: ca. -9.51 USDC, 200 Switches
+Hysteresis-EREM Blindtest: ca. +4.64 USDC, 100 Switches
+robust_frozen_edge = true
+router_integration_allowed_now = true
+```
+
+Router-Integration:
+
+```text
+Datei: src/router/__init__.py
+Version: erem_defensive_router_v1_2_hysteresis_minhold_20260703
+Familie: erem_exposure_management
+Basis-Variante: erem_btc_drawdown_q35_or_ema_below0
+Router-Kandidat: erem_minhold_exp48_flat12
+Kein Blindtest-Lernen.
+Thresholds nur aus Training.
+Smoke/Full/UI bleiben derselbe Backtestpfad.
+```
+
+Echter UI-Backend-Full-Backtest nach Integration:
+
+```text
+Run: run_20260703_122054
+Typ: full_backtest
+Kandidat: erem_minhold_exp48_flat12
+Ergebnis: ca. +4.64 USDC
+Gewinn/Tag: ca. +0.0127 USDC/Tag
+Trades: 50
+Final Capital: ca. 104.64 USDC
+Zielstatus: target_not_reached
+```
+
+Entscheidung:
+
+- Das ist ein echter Fortschritt von negativ zu positiv.
+- Es ist weiterhin weit weg von `3 USDC/Tag`.
+- Nicht uebernehmen.
+- EREM-Hysteresis darf als defensive Baseline im Router bleiben.
+- Nicht weiter EREM auf denselben Blindtest nachoptimieren.
+- Der naechste sinnvolle Schritt ist eine neue, getrennte Profit-Alpha-Spur,
+  die nach Kosten robust ist.
+
+Wichtig fuer GPT:
 
 - `3 USDC/Tag` bleibt Wunsch/Zielwert, kein Versprechen.
-- Keine Uebernahme, wenn der Blindtest negativ/fragil ist.
 - Kein Live/Paper.
 - Keine Gates lockern, nur um das Ziel zu erzwingen.
+- Keine alte BRH/ERV/VEC/AFP/R2/EREM-Spur durch Nachoptimierung retten.
+- Jede neue Profit-Alpha-Idee zuerst training-only/walkforward.
+- Danach maximal ein exakt eingefrorener Research-Blindtest.
+- Erst danach Router/UI-Full.
 
-Wenn der EREM-Full-Backtest negativ oder methodisch unklar ist, dann externe
-Hilfe wieder mit allen aktuellen EREM-Routerdaten fragen. Historische Prompts:
+Wenn externe Hilfe wieder genutzt wird, dann mit dem aktuellen v1.2-Stand
+fragen. Historische Prompts:
 
 ```text
 docs/ARENA_AI_REQUEST_AFTER_AFP_V1_20260702.md
@@ -1195,7 +1295,31 @@ Die Antwort darf nicht blind eingebaut werden. Waehle den besseren Vorschlag,
 begruende warum, baue ihn minimal research-only, und stoppe wieder, wenn die
 Evidenz nicht reicht.
 
-## 18. Uebergabeformat nach jedem Patch
+## 18. Naechster Auftrag
+
+Der naechste Auftrag soll nicht lauten: "EREM weiter verbessern, bis 3 USDC
+erscheinen." Das waere Blindtest-Nachoptimierung.
+
+Stattdessen:
+
+```text
+Baue eine neue Profit-Alpha-Existenzpruefung, getrennt von EREM.
+Sie darf EREM-Hysteresis als defensive Baseline respektieren, aber nicht auf
+dem bereits verbrauchten Blindtest herumoptimieren.
+```
+
+Gute Kandidaten fuer neue Research-Spuren:
+
+- Kontext-/Regime-Classifier fuer "wann lohnt ETH long exposure ueberhaupt",
+  aber nur training-only kalibriert.
+- Lead/Lag-Struktur BTCUSDC -> ETHUSDC oder ETHBTC -> ETHUSDC mit
+  klarer Kostenhuerde.
+- Event-/Volatilitaets-Kompression mit spaetem Entry und langerem Hold, weil
+  kurze 8-15-Minuten Spot-Long-only Spuren bisher an Kosten scheiterten.
+- Kombination aus wenigen robusten Long-Exposures plus EREM-Hysteresis als
+  Risiko-Overlay, aber erst nach separater Evidenz.
+
+## 19. Uebergabeformat nach jedem Patch
 
 Am Ende immer berichten:
 

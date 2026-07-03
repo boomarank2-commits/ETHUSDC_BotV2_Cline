@@ -1338,7 +1338,9 @@ def test_walkforward_all_positive_policy_rejects_stable_with_negative_fold() -> 
     ) == "rejected_by_walkforward_all_positive_policy"
 
 
-def test_erem_defensive_router_result_uses_fixed_research_variant(monkeypatch) -> None:
+def test_erem_defensive_router_result_uses_fixed_hysteresis_overlay(
+    monkeypatch,
+) -> None:
     index = pd.date_range(
         "2025-01-01T00:00:00Z",
         periods=70 * 24 + 8,
@@ -1385,9 +1387,10 @@ def test_erem_defensive_router_result_uses_fixed_research_variant(monkeypatch) -
         lambda *_args, **_kwargs: thresholds,
     )
     monkeypatch.setattr(router_module, "simulate_erem_exposure", fake_metrics)
+    monkeypatch.setattr(router_module, "simulate_erem_hysteresis", fake_metrics)
     monkeypatch.setattr(
         router_module,
-        "_desired_exposure_changes",
+        "hysteresis_exposure_changes",
         lambda *_args, **_kwargs: {index[-8]: True, index[-5]: False},
     )
     split = TrainBlindSplit(
@@ -1404,9 +1407,16 @@ def test_erem_defensive_router_result_uses_fixed_research_variant(monkeypatch) -
     result = _build_erem_defensive_router_result(split, 100.0)
 
     assert result["selected"] is True
-    assert result["variant_id"] == "erem_btc_drawdown_q35_or_ema_below0"
+    assert result["base_variant_id"] == "erem_btc_drawdown_q35_or_ema_below0"
+    assert result["variant_id"] == "erem_minhold_exp48_flat12"
+    assert result["hysteresis_overlay"] == {
+        "variant_id": "erem_minhold_exp48_flat12",
+        "min_exposed_hours": 48,
+        "min_flat_hours": 12,
+    }
     assert result["setup"]["blindtest_learning"] is False
     assert result["result"].candidate.family == "erem_exposure_management"
+    assert result["result"].candidate.candidate_id == "erem_minhold_exp48_flat12"
     assert result["result"].max_drawdown == 12.3
     assert result["result"].trade_count == 1
 
