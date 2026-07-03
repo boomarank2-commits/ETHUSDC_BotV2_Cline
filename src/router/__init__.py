@@ -57,9 +57,10 @@ WALKFORWARD_ALL_POSITIVE_POLICY = (
 )
 WALKFORWARD_ALL_POSITIVE_MIN_ACTIVE_FOLDS = 3
 WALKFORWARD_REGIME_FOLD_DAYS = 90
-EREM_DEFENSIVE_ROUTER_VERSION = "erem_defensive_router_v1_20260702"
+EREM_DEFENSIVE_ROUTER_VERSION = "erem_defensive_router_v1_1_hourly_aligned_20260702"
 EREM_DEFENSIVE_VARIANT_ID = "erem_btc_drawdown_q35_or_ema_below0"
 EREM_MIN_TRAINING_DAYS = 60.0
+EREM_MAX_SPLIT_ALIGNMENT_GAP = pd.Timedelta(hours=2)
 
 
 def _ceil(value):
@@ -3026,7 +3027,7 @@ def _erem_split_timestamps(split):
     )
 
 
-def _erem_disabled_result(reason, error=None):
+def _erem_disabled_result(reason, error=None, **details):
     return {
         "available": False,
         "selected": False,
@@ -3034,6 +3035,33 @@ def _erem_disabled_result(reason, error=None):
         "error": error,
         "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
         "variant_id": EREM_DEFENSIVE_VARIANT_ID,
+        **details,
+    }
+
+
+def _erem_align_window_to_execution(execution, start, end):
+    """Align minute-precise UI windows to closed EREM 1h execution bars."""
+    if execution.empty:
+        return None
+    window_index = execution.index[(execution.index >= start) & (execution.index <= end)]
+    if window_index.empty:
+        return None
+    aligned_start = window_index[0]
+    aligned_end = window_index[-1]
+    leading_gap = aligned_start - start
+    trailing_gap = end - aligned_end
+    if leading_gap < pd.Timedelta(0) or trailing_gap < pd.Timedelta(0):
+        return None
+    if (
+        leading_gap > EREM_MAX_SPLIT_ALIGNMENT_GAP
+        or trailing_gap > EREM_MAX_SPLIT_ALIGNMENT_GAP
+    ):
+        return None
+    return {
+        "start": aligned_start,
+        "end": aligned_end,
+        "leading_gap_hours": leading_gap.total_seconds() / 3600.0,
+        "trailing_gap_hours": trailing_gap.total_seconds() / 3600.0,
     }
 
 
@@ -3119,7 +3147,13 @@ def _erem_exposure_trades(
     return trades
 
 
-def _erem_result_from_trades(trades, start, end, stake_quote_amount):
+def _erem_result_from_trades(
+    trades,
+    start,
+    end,
+    stake_quote_amount,
+    mark_to_market_max_drawdown_pct=None,
+):
     total_gross = sum(trade.gross_pnl for trade in trades)
     total_fees = sum(trade.fees_paid for trade in trades)
     total_net = sum(trade.net_pnl for trade in trades)
@@ -3157,7 +3191,11 @@ def _erem_result_from_trades(trades, start, end, stake_quote_amount):
         sum(1 for trade in trades if trade.net_pnl > 0),
         sum(1 for trade in trades if trade.net_pnl < 0),
         sum(1 for trade in trades if trade.net_pnl == 0),
-        max_drawdown_pct,
+        (
+            mark_to_market_max_drawdown_pct
+            if mark_to_market_max_drawdown_pct is not None
+            else max_drawdown_pct
+        ),
         len(trades),
         0,
         0,
@@ -3176,45 +3214,68 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
         )
     try:
         execution, _, _, _ = _load_erem_execution()
-        if execution.index.min() > training_start or execution.index.max() < blindtest_end:
-            return _erem_disabled_result("erem_execution_context_does_not_cover_split")
+        training_window = _erem_align_window_to_execution(
+            execution,
+            training_start,
+            training_end,
+        )
+        blindtest_window = _erem_align_window_to_execution(
+            execution,
+            blindtest_start,
+            blindtest_end,
+        )
+        if training_window is None or blindtest_window is None:
+            return _erem_disabled_result(
+                "erem_execution_context_does_not_cover_split_hourly_alignment",
+                execution_start=(
+                    execution.index.min().isoformat() if not execution.empty else None
+                ),
+                execution_end=(
+                    execution.index.max().isoformat() if not execution.empty else None
+                ),
+                requested_training_start=training_start.isoformat(),
+                requested_training_end=training_end.isoformat(),
+                requested_blindtest_start=blindtest_start.isoformat(),
+                requested_blindtest_end=blindtest_end.isoformat(),
+            )
         variant = _erem_defensive_variant()
         config = EremConfig(position_size_usdc=stake_quote_amount)
         thresholds = calibrate_erem_thresholds(
             execution,
-            training_start,
-            training_end,
+            training_window["start"],
+            training_window["end"],
             variant,
         )
         training_metrics = simulate_erem_exposure(
             execution,
             variant,
             thresholds,
-            training_start,
-            training_end,
+            training_window["start"],
+            training_window["end"],
             config,
         )
         blindtest_metrics = simulate_erem_exposure(
             execution,
             variant,
             thresholds,
-            blindtest_start,
-            blindtest_end,
+            blindtest_window["start"],
+            blindtest_window["end"],
             config,
         )
         trades = _erem_exposure_trades(
             execution,
             variant,
             thresholds,
-            blindtest_start,
-            blindtest_end,
+            blindtest_window["start"],
+            blindtest_window["end"],
             config,
         )
         result = _erem_result_from_trades(
             trades,
-            blindtest_start,
-            blindtest_end,
+            blindtest_window["start"],
+            blindtest_window["end"],
             stake_quote_amount,
+            float(blindtest_metrics.get("erem_maxdd_pct", 0.0)) * 100.0,
         )
     except Exception as error:  # noqa: BLE001
         return _erem_disabled_result("erem_router_integration_error", str(error))
@@ -3230,6 +3291,26 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
         "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
         "blindtest_learning": False,
         "thresholds": asdict(thresholds),
+        "requested_training_window": {
+            "start": training_start.isoformat(),
+            "end": training_end.isoformat(),
+        },
+        "aligned_training_window": {
+            "start": training_window["start"].isoformat(),
+            "end": training_window["end"].isoformat(),
+            "leading_gap_hours": training_window["leading_gap_hours"],
+            "trailing_gap_hours": training_window["trailing_gap_hours"],
+        },
+        "requested_blindtest_window": {
+            "start": blindtest_start.isoformat(),
+            "end": blindtest_end.isoformat(),
+        },
+        "aligned_blindtest_window": {
+            "start": blindtest_window["start"].isoformat(),
+            "end": blindtest_window["end"].isoformat(),
+            "leading_gap_hours": blindtest_window["leading_gap_hours"],
+            "trailing_gap_hours": blindtest_window["trailing_gap_hours"],
+        },
         "training_metrics": training_metrics,
         "blindtest_metrics": blindtest_metrics,
         "trade_count": result.trade_count,
@@ -3243,6 +3324,10 @@ def _build_erem_defensive_router_result(split, stake_quote_amount):
         "router_version": EREM_DEFENSIVE_ROUTER_VERSION,
         "variant_id": EREM_DEFENSIVE_VARIANT_ID,
         "thresholds": asdict(thresholds),
+        "requested_training_window": setup["requested_training_window"],
+        "aligned_training_window": setup["aligned_training_window"],
+        "requested_blindtest_window": setup["requested_blindtest_window"],
+        "aligned_blindtest_window": setup["aligned_blindtest_window"],
         "training_metrics": training_metrics,
         "blindtest_metrics": blindtest_metrics,
         "result": result,
@@ -3815,6 +3900,10 @@ def build_activity_first_router_report(
             else "not_selected"
         ),
         "training_only_thresholds": erem_defensive.get("thresholds"),
+        "requested_training_window": erem_defensive.get("requested_training_window"),
+        "aligned_training_window": erem_defensive.get("aligned_training_window"),
+        "requested_blindtest_window": erem_defensive.get("requested_blindtest_window"),
+        "aligned_blindtest_window": erem_defensive.get("aligned_blindtest_window"),
         "training_metrics": erem_defensive.get("training_metrics"),
         "blindtest_metrics": erem_defensive.get("blindtest_metrics"),
         "blindtest_learning": False,

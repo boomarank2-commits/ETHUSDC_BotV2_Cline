@@ -861,7 +861,7 @@ Interpretation:
 Aktuelle Router-Integration:
 
 - Datei: `src/router/__init__.py`
-- Version: `erem_defensive_router_v1_20260702`
+- Version: `erem_defensive_router_v1_1_hourly_aligned_20260702`
 - Kandidat: `erem_btc_drawdown_q35_or_ema_below0`
 - Familie: `erem_exposure_management`
 - Nur Training kalibriert Thresholds.
@@ -874,12 +874,61 @@ Aktuelle Router-Integration:
   - `rejection_summary.erem_defensive_router_integration`
   - `selected_setups[0].strategy_family = erem_exposure_management`
 
+Patch nach erstem UI-Full-Run:
+
+- Run `run_20260702_201035` zeigte wieder einen alten
+  `eth_us_impulse_entry`-Kandidaten und `-45.53 USDC`.
+- Das war kein EREM-Ergebnis.
+- Im Report stand:
+  `erem_execution_context_does_not_cover_split`.
+- Ursache war ein technischer Integrationsbug:
+  EREM arbeitet auf geschlossenen 1h-Execution-Bars, der UI-Split endet aber
+  minuten-genau. Die Abdeckungspruefung war zu streng und blockierte wegen
+  ca. 56 Minuten Startversatz bzw. 3 Minuten Endversatz.
+- Fix:
+  `erem_defensive_router_v1_1_hourly_aligned_20260702` aligniert Training und
+  Blindtest auf geschlossene 1h-Bars im UI-Split und erlaubt maximal 2h
+  Randversatz. Echte veraltete Daten blockieren weiterhin.
+- Direkte lokale Split-Pruefung nach Fix:
+  EREM waere fuer denselben Split aktiv gewesen und haette ca. `-9.51 USDC`
+  (`-0.026 USDC/Tag`) geliefert. Das ist weiter negativ, aber deutlich
+  defensiver als der alte Pool aus dem Run.
+
+Echter UI-Full-Run nach Fix:
+
+- Run: `run_20260703_100717`
+- Strategie/Familie: `erem_exposure_management`
+- Kandidat: `erem_btc_drawdown_q35_or_ema_below0`
+- Ergebnis:
+  - `-9.51 USDC`
+  - `-0.026 USDC/Tag`
+  - 100 Exposure-Segmente
+- EREM-Report-Metriken:
+  - EREM PnL ca. `-9.51 USDC`
+  - ETH Buy-and-Hold ca. `-34.88 USDC`
+  - relativer Vorteil ca. `+0.0695 USDC/Tag`
+  - EREM MaxDD ca. `50.68 USDC`
+  - Buy-and-Hold MaxDD ca. `130.76 USDC`
+- Entscheidung:
+  - technisch korrekt;
+  - defensiver als Buy-and-Hold;
+  - absolut negativ;
+  - nicht uebernehmen;
+  - nicht weiter per Gate-Tuning retten.
+- Danach gepatcht:
+  - EREM-Router-Result verwendet mark-to-market Drawdown aus
+    `blindtest_metrics.erem_maxdd_pct`.
+  - UI-Label `Kein robuster Kandidat` wurde zu
+    `Kein freigegebener Router-Kandidat`.
+
 Naechster kleinster sinnvoller Schritt:
 
 ```text
-UI-Full-Backtest starten und danach den neuen Reportordner analysieren.
-Nicht sofort live/paper uebernehmen. Erwartung: defensive Risiko-/Drawdown-
-Verbesserung; 3 USDC/Tag bleibt Wunsch/Zielwert, kein Patch-Versprechen.
+Keinen weiteren Full-Backtest derselben EREM-Logik starten. Externe/Arena-
+Analyse mit dem echten EREM-Full-Befund fragen oder einen neuen, klar
+abgegrenzten research-only Profit-Alpha-Scan bauen. EREM bleibt als defensive
+Benchmark/Overlay-Idee erhalten, aber nicht als uebernahmefaehige Strategie.
+3 USDC/Tag bleibt Wunsch/Zielwert, kein Patch-Versprechen.
 ```
 
 ## 15. Research-Schritt: VEC-v1 Exhaustion Scan

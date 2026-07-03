@@ -21,6 +21,7 @@ from src.research.erem_exposure_edge_check import EremThresholds
 from src.router import (
     _aggregate_pool_result,
     _build_erem_defensive_router_result,
+    _erem_align_window_to_execution,
     _filter_learning_eligible,
     _learn_aggtrade_filter_candidates,
     _learn_context_market_filter_candidates,
@@ -1364,7 +1365,7 @@ def test_erem_defensive_router_result_uses_fixed_research_variant(monkeypatch) -
             "strategy_minus_buy_hold_usdc_per_day": 0.3,
             "erem_maxdd_usdc": 1.0,
             "buy_hold_maxdd_usdc": 4.0,
-            "erem_maxdd_pct": 0.01,
+            "erem_maxdd_pct": 0.123,
             "buy_hold_maxdd_pct": 0.04,
             "time_in_market_pct": 0.5,
             "switch_count": 2,
@@ -1406,4 +1407,35 @@ def test_erem_defensive_router_result_uses_fixed_research_variant(monkeypatch) -
     assert result["variant_id"] == "erem_btc_drawdown_q35_or_ema_below0"
     assert result["setup"]["blindtest_learning"] is False
     assert result["result"].candidate.family == "erem_exposure_management"
+    assert result["result"].max_drawdown == 12.3
     assert result["result"].trade_count == 1
+
+
+def test_erem_alignment_accepts_hourly_edge_gap_but_rejects_stale_data() -> None:
+    index = pd.date_range(
+        "2026-01-01T20:00:00Z",
+        periods=4,
+        freq="h",
+        tz="UTC",
+    )
+    execution = pd.DataFrame({"open": [100.0, 101.0, 102.0, 103.0]}, index=index)
+
+    aligned = _erem_align_window_to_execution(
+        execution,
+        pd.Timestamp("2026-01-01T20:04:00Z"),
+        pd.Timestamp("2026-01-01T23:03:00Z"),
+    )
+
+    assert aligned is not None
+    assert aligned["start"] == pd.Timestamp("2026-01-01T21:00:00Z")
+    assert aligned["end"] == pd.Timestamp("2026-01-01T23:00:00Z")
+    assert round(aligned["leading_gap_hours"], 4) == round(56 / 60, 4)
+    assert round(aligned["trailing_gap_hours"], 4) == round(3 / 60, 4)
+
+    stale = _erem_align_window_to_execution(
+        execution,
+        pd.Timestamp("2026-01-01T20:04:00Z"),
+        pd.Timestamp("2026-01-02T02:03:00Z"),
+    )
+
+    assert stale is None

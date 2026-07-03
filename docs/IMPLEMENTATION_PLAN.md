@@ -59,9 +59,24 @@ Aktueller Schwerpunkt:
 14. Nach Nutzer-Klarstellung (`3 USDC/Tag` ist Wunsch/Zielwert, kein
     Versprechen) wurde EREM als defensives Zwischenziel akzeptiert und minimal
     in den gemeinsamen `activity_first_router` integriert:
-    `erem_defensive_router_v1_20260702`.
+    `erem_defensive_router_v1_1_hourly_aligned_20260702`.
     Die minimale EREM-Router-Integration ist damit umgesetzt, aber noch nicht
     durch einen neuen UI-Full-Backtest bewertet.
+    Run `run_20260702_201035` war noch kein EREM-Urteil: EREM blockierte
+    wegen zu strengem 1h-Execution-vs-Minuten-Split-Guard
+    (`erem_execution_context_does_not_cover_split`) und der alte Pool lief.
+    Dieser Guard ist jetzt durch Hourly-Alignment mit maximal 2h Randtoleranz
+    ersetzt.
+15. Neuer UI-Full-Backtest `run_20260703_100717` lief danach korrekt mit
+    EREM:
+    `erem_exposure_management / erem_btc_drawdown_q35_or_ema_below0`.
+    Ergebnis: ca. `-9.51 USDC`, `-0.026 USDC/Tag`, 100 Exposure-Segmente.
+    EREM war defensiver als ETH Buy-and-Hold (`-34.88 USDC`, MaxDD ca.
+    `130.76 USDC`), aber absolut negativ und nicht uebernahmefaehig.
+16. Kleiner Report-Fix danach: EREM-Router-Result verwendet fuer MaxDD den
+    mark-to-market Drawdown aus `blindtest_metrics.erem_maxdd_pct`; UI-Label
+    `Kein robuster Kandidat` wurde zu `Kein freigegebener Router-Kandidat`
+    praezisiert.
 15. VEC-v1 Exhaustion Scan wurde gebaut. Ergebnis:
     `no_vec_training_edge`, 0/4 Varianten passing. Die 15m/1h
     Selling-Exhaustion-Idee erzeugte nur 2-6 Validation-Trades je Variante
@@ -137,7 +152,7 @@ Implemented:
   `erem_btc_drawdown_q35_or_ema_below0`; Ergebnis robust gegen Buy-and-Hold,
   aber nicht als 3-USDC/Tag-Profit-Alpha
 - minimale EREM-Integration im gemeinsamen Routerpfad
-  `erem_defensive_router_v1_20260702`; nur defensives ETH-Exposure-
+  `erem_defensive_router_v1_1_hourly_aligned_20260702`; nur defensives ETH-Exposure-
   Management, keine Profit-Alpha-Behauptung
 - research-only VEC-v1 Exhaustion Scan auf geschlossenen 15m/1h Bars mit
   ETHUSDC Kline-Orderflow; Ergebnis `no_vec_training_edge`, nicht
@@ -150,8 +165,11 @@ Next:
 
 - BRH/ERV nicht weiter anfassen.
 - VEC-v1 und AFP-v1 nicht retten und nicht integrieren.
-- UI-Full-Backtest jetzt starten lassen, um die EREM-defensive Integration
-  im echten Pfad zu messen.
+- Keinen weiteren Full-Backtest derselben EREM-Logik starten; der echte
+  Full-Befund liegt vor und ist nicht uebernahmefaehig.
+- Naechster Schritt: externe/Arena-Analyse oder neuer research-only
+  Profit-Alpha-Scan. EREM nur als defensiven Vergleich behalten, nicht ueber
+  Gates tunen.
 - Erwartung ehrlich halten: Ziel/Wunsch bleibt `3 USDC/Tag`, aber EREM soll
   zuerst Risiko/Drawdown gegen ETH Buy-and-Hold verbessern, nicht Profit
   versprechen.

@@ -113,7 +113,7 @@ defensives ETH-Exposure-/Drawdown-Zwischenziel:
   Profit-Edge, aber ein robuster Exposure-/Drawdown-Befund. Nach Nutzer-
   Klarstellung (`3 USDC` ist Wunsch, kein Versprechen) wurde genau dieser
   Kandidat minimal in den gemeinsamen `activity_first_router` integriert:
-  `erem_defensive_router_v1_20260702`.
+  `erem_defensive_router_v1_1_hourly_aligned_20260702`.
 - VEC-v1 Exhaustion Scan: weil der Nutzer ausdruecklich `3 USDC/Tag` Profit-
   Alpha statt nur Exposure-Management will, wurde ein neuer Microstructure-
   Alpha-Pfad getestet: Volume-Climax + Taker-Sell-Exhaustion + Reclaim auf
@@ -454,7 +454,7 @@ Interpretation:
   und kein Versprechen ist. Deshalb wurde EREM als defensives Zwischenziel
   akzeptiert.
 - EREM wurde danach minimal in den gemeinsamen Routerpfad integriert:
-  `erem_defensive_router_v1_20260702`.
+  `erem_defensive_router_v1_1_hourly_aligned_20260702`.
 - Der aktuelle UI-Full-Backtest sieht EREM jetzt. Er soll als naechster
   Volltest gestartet werden, um dieselbe 730/365-Logik im echten
   Backtestpfad zu pruefen. Keine Uebernahme ohne plausibel positiven Report.
@@ -464,7 +464,7 @@ Aktuelle EREM-Router-Integration:
 - Datei:
   - `src/router/__init__.py`
 - Version:
-  - `erem_defensive_router_v1_20260702`
+  - `erem_defensive_router_v1_1_hourly_aligned_20260702`
 - Kandidat:
   - `erem_btc_drawdown_q35_or_ema_below0`
 - Familie:
@@ -484,6 +484,67 @@ Aktuelle EREM-Router-Integration:
 - Short-Smokes koennen EREM deaktivieren, wenn zu wenig Trainingsdauer fuer
   die Training-only Kalibrierung vorhanden ist. Das ist kein zweiter Pfad,
   sondern derselbe Pfad mit zu kurzem Fenster.
+
+Wichtiger Patch nach Run `run_20260702_201035`:
+
+- Dieser Full-Run war kein gueltiges EREM-Urteil.
+- Der Report zeigte:
+  `erem_execution_context_does_not_cover_split`.
+- Ursache:
+  UI-Split war minuten-genau (`20:04` bis `20:03`), EREM arbeitet aber auf
+  geschlossenen 1h-Execution-Bars. Die Guard-Pruefung verlangte faelschlich
+  eine exakt bis zur letzten UI-Minute reichende 1h-Execution.
+- Fix:
+  EREM aligniert jetzt Training und Blindtest auf die vorhandenen
+  geschlossenen 1h-Bars innerhalb des UI-Splits. Maximal 2 Stunden Randversatz
+  sind erlaubt; echte veraltete Daten blockieren weiterhin.
+- Direkte lokale Split-Pruefung nach Fix:
+  - EREM waere fuer denselben Split selektiert worden.
+  - Aligned Training:
+    `2023-07-03T21:00:00Z` bis `2025-07-02T20:00:00Z`.
+  - Aligned Blindtest:
+    `2025-07-02T21:00:00Z` bis `2026-07-02T20:00:00Z`.
+  - Grobe EREM-PnL fuer diesen Split:
+    ca. `-9.51 USDC` / `-0.026 USDC/Tag`, also defensiver als der alte
+    Aktivitaets-Pool aus dem Run (`-45.53 USDC`), aber weiterhin kein
+    positiver 3-USDC/Tag-Befund.
+- Naechster Schritt:
+  UI komplett neu starten und einen neuen Full-Backtest laufen lassen, damit
+  der echte Report die Version
+  `erem_defensive_router_v1_1_hourly_aligned_20260702` enthaelt.
+
+Aktueller UI-Full-Backtest nach Alignment-Fix:
+
+- Run:
+  - `run_20260703_100717`
+- Ergebnis:
+  - Strategie/Familie: `erem_exposure_management`
+  - Kandidat: `erem_btc_drawdown_q35_or_ema_below0`
+  - Gesamt-PnL: ca. `-9.51 USDC`
+  - Gewinn/Tag: ca. `-0.026 USDC/Tag`
+  - Trades/Exposure-Segmente: `100`
+  - EREM vs. ETH Buy-and-Hold im Report:
+    - EREM: ca. `-9.51 USDC`
+    - Buy-and-Hold: ca. `-34.88 USDC`
+    - relativer Vorteil: ca. `+0.0695 USDC/Tag`
+    - EREM MaxDD: ca. `50.68 USDC`
+    - Buy-and-Hold MaxDD: ca. `130.76 USDC`
+- Entscheidung:
+  - technisch korrekt gelaufen;
+  - EREM ist defensiver als Buy-and-Hold;
+  - aber absolut negativ und weit vom Wunsch/Zielwert `3 USDC/Tag` entfernt;
+  - nicht uebernehmen.
+- Technischer Folgepatch:
+  - Router-Report verwendet fuer EREM jetzt den mark-to-market Drawdown aus
+    `blindtest_metrics.erem_maxdd_pct` statt nur geschlossene Exposure-Trades.
+  - UI-Label wurde sprachlich entschaerft:
+    `Kein freigegebener Router-Kandidat` statt `Kein robuster Kandidat`.
+- Naechster sinnvoller Schritt:
+  - kein weiteres EREM-Gate-Tuning;
+  - keine alte Impulse-/BRH-/VEC-/AFP-Spur retten;
+  - extern/Arena oder GPT mit diesem echten EREM-Full-Befund fragen, welches
+    neue ETHUSDC-Research-Thema realistisch Profit-Alpha statt nur
+    Drawdown-Management liefern koennte.
 
 ## Datenwahrheit
 
