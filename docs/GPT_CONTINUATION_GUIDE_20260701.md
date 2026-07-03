@@ -1319,7 +1319,105 @@ Gute Kandidaten fuer neue Research-Spuren:
 - Kombination aus wenigen robusten Long-Exposures plus EREM-Hysteresis als
   Risiko-Overlay, aber erst nach separater Evidenz.
 
-## 19. Uebergabeformat nach jedem Patch
+## 19. Update: BELL-v1 und BEV-L v1 wurden getestet und verworfen
+
+Nach dem EREM-Hysteresis-v1.2-Full-Backtest wurden zwei neue Profit-Alpha-
+Research-Spuren aus externen Antworten gebaut. Beide sind research-only und
+haben den Blindtest nicht beruehrt.
+
+### BELL-v1 BTC->ETH Lead-Lag/Catch-up
+
+```text
+Datei: src/research/bell_v1_leadlag_scan.py
+Script: scripts/run_bell_v1_leadlag_scan.py
+Test: tests/test_bell_v1_leadlag_scan.py
+Report: reports/research/bell_v1_leadlag_scan/bell_v1_leadlag_scan_report.json
+```
+
+Ergebnis:
+
+```text
+status = no_bell_training_edge
+sanity_status = bell_sanity_failed
+passing_scan_count = 0
+variant_count = 6
+eligible_variant_count = 0
+best_sanity_feature = btc_impulse_with_ethbtc_lag
+best_sanity_horizon = 48
+best_sanity_positive_folds = 4
+required_positive_folds = 5
+```
+
+Entscheidung:
+
+```text
+frozen_blindtest_allowed_now = false
+router_integration_allowed_now = false
+ui_full_backtest_allowed_now = false
+```
+
+BELL-v1 darf nicht durch Gate-Lockerung gerettet werden.
+
+### BEV-L v1 Volatility-Divergence
+
+```text
+Datei: src/research/bev_l_v1_divergence_scan.py
+Script: scripts/run_bev_l_v1_divergence_scan.py
+Test: tests/test_bev_l_v1_divergence_scan.py
+Report: reports/research/bev_l_v1_divergence_scan/bev_l_v1_divergence_scan_report.json
+```
+
+Ergebnis:
+
+```text
+status = no_bev_l_training_divergence_edge
+passing_horizon_count = 0
+12h: 0 passing folds
+24h: 0 passing folds
+48h: 1 passing fold
+```
+
+Entscheidung:
+
+```text
+frozen_blindtest_allowed_now = false
+router_integration_allowed_now = false
+ui_full_backtest_allowed_now = false
+```
+
+BEV-L v1 darf nicht durch Gate-Lockerung gerettet werden.
+
+### Wichtig fuer kuenftige Full-Backtests
+
+Der Nutzer wuenscht echte Full-Backtests nach Patches. Das ist richtig, sobald
+der echte Router/UI-Full-Pfad geaendert wurde.
+
+Hier wurde aber kein Routerverhalten geaendert, weil beide neuen Research-
+Spuren vor frozen/router gescheitert sind. Ein Full-Backtest nach diesem Patch
+wuerde deshalb nur die bestehende EREM-Hysteresis-v1.2-Baseline erneut messen.
+Auf Nutzerwunsch wurde dieser Kontroll-Full trotzdem ausgefuehrt:
+
+```text
+run_20260703_180348
+erem_minhold_exp48_flat12
+ca. +4.64 USDC
+ca. +0.0127 USDC/Tag
+50 Trades
+Final Capital ca. 104.64 USDC
+```
+
+Das ist keine Verbesserung durch BELL/BEV, sondern die erneute Bestaetigung
+des unveraenderten EREM-Hysteresis-v1.2-Routerpfads. Aktueller Stand bleibt:
+positiver defensiver Zwischenstand, aber nicht uebernahmefaehig und weit weg
+von `3 USDC/Tag`.
+
+Regel:
+
+- Router-Patch vorhanden -> Full-Backtest laufen lassen.
+- Nur research-only Fail -> keinen Full-Backtest als Scheinbeweis starten.
+- Die Research-Reports sind dann die ehrliche Wahrheit.
+
+## 20. Uebergabeformat nach jedem Patch
 
 Am Ende immer berichten:
 

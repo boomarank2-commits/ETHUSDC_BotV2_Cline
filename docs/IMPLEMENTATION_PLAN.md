@@ -179,6 +179,111 @@ Entscheidung:
 - Naechster sinnvoller Schritt ist eine neue, getrennte Profit-Alpha-Spur, die
   erst training-only/walkforward und danach frozen blindtest besteht.
 
+## Update 2026-07-03 - BELL-v1 und BEV-L v1 nach externen Antworten
+
+Nach den neuesten externen Antworten wurden zwei neue, klar getrennte
+Profit-Alpha-Spuren gebaut. Beide bleiben research-only und verwenden den
+Blindtest nicht.
+
+### BELL-v1 BTC->ETH Lead-Lag/Catch-up
+
+Dateien:
+
+- `src/research/bell_v1_leadlag_scan.py`
+- `scripts/run_bell_v1_leadlag_scan.py`
+- `tests/test_bell_v1_leadlag_scan.py`
+
+Ziel:
+
+- Nicht EREM weiter optimieren.
+- Nicht BRH/ERV/VEC/AFP retten.
+- Pruefen, ob ETHUSDC nach BTC-Impulsen in Risk-On-Kontexten verzoegert
+  nachzieht, wenn ETH/ETHBTC noch nicht gechased sind.
+
+Echter lokaler Trainingslauf:
+
+- Status: `no_bell_training_edge`
+- Sanity: `bell_sanity_failed`
+- Passing Sanity-Scans: `0`
+- Varianten: `6`
+- Eligible Varianten: `0`
+- Bester Sanity-Ansatz: `btc_impulse_with_ethbtc_lag`, `48h`,
+  aber nur `4` positive Folds statt Mindestwert `5`.
+
+Entscheidung:
+
+- Kein frozen Blindtest.
+- Kein Router-Patch.
+- Kein UI-Full-Backtest.
+- Nicht durch Gate-Lockerung retten.
+
+### BEV-L v1 Volatility-Divergence
+
+Dateien:
+
+- `src/research/bev_l_v1_divergence_scan.py`
+- `scripts/run_bev_l_v1_divergence_scan.py`
+- `tests/test_bev_l_v1_divergence_scan.py`
+
+Ziel:
+
+- Pruefen, ob BTC-Volatilitaetskompression plus positive ETHBTC-
+  Volatilitaetsdivergenz einen stabilen ETHUSDC-Forward-Edge erzeugt.
+
+Echter lokaler Trainingslauf:
+
+- Status: `no_bev_l_training_divergence_edge`
+- Passing Horizonte: `0`
+- Horizon-Folds:
+  - `12h`: `0` passing Folds
+  - `24h`: `0` passing Folds
+  - `48h`: `1` passing Fold
+
+Entscheidung:
+
+- Keine Strategie bauen.
+- Kein frozen Blindtest.
+- Kein Router-Patch.
+- Kein UI-Full-Backtest.
+- Nicht durch Gate-Lockerung retten.
+
+### Full-Backtest-Regel nach diesem Patch
+
+Der Nutzer wuenscht nach jedem Patch einen echten Full-Backtest, damit die
+Verbesserung schwarz auf weiss sichtbar ist. Das bleibt richtig fuer jeden
+routerwirksamen Patch.
+
+In diesem konkreten Patch wurde aber kein Routerverhalten geaendert, weil
+BELL-v1 und BEV-L v1 beide vor frozen/router gescheitert sind. Ein Full-
+Backtest wuerde daher nicht BELL/BEV messen, sondern nur erneut die bestehende
+EREM-Hysteresis-v1.2-Baseline (`run_20260703_122054`, ca. `+4.64 USDC`).
+
+Auf Nutzerwunsch wurde trotzdem ein echter UI-Backend-Full-Backtest als
+Kontrolllauf gestartet:
+
+- Run: `run_20260703_180348`
+- Gemessener Router: unveraenderte EREM-Hysteresis-v1.2-Baseline
+- Kandidat: `erem_minhold_exp48_flat12`
+- Ergebnis: ca. `+4.64 USDC`
+- Gewinn/Tag: ca. `+0.0127 USDC/Tag`
+- Trades: `50`
+- Final Capital: ca. `104.64 USDC`
+
+Interpretation:
+
+- Der Full-Run bestaetigt, dass der echte UI/Full-Pfad weiter laeuft.
+- Der Full-Run bestaetigt nicht BELL/BEV, weil beide nicht integriert wurden.
+- Der aktuelle uebernahmefaehige Stand bleibt: kein Kandidat. EREM-v1.2 ist
+  nur ein defensiver positiver Zwischenstand, weit weg von `3 USDC/Tag`.
+
+Regel fuer GPT/Codex:
+
+- Wenn ein Patch den Router/UI-Full-Pfad veraendert: echten Full-Backtest
+  laufen lassen.
+- Wenn ein Patch research-only ist und keinen Kandidaten freigibt:
+  keinen Full-Backtest als Scheinbeweis starten; Report und Doku sind dann die
+  Wahrheit.
+
 Keine Datenquelle und keine Strategie wird routerwirksam, nur weil sie
 heruntergeladen oder als Idee formuliert wurde.
 

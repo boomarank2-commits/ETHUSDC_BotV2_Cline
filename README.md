@@ -1,6 +1,6 @@
 # ETHUSDC Bot V2 - einzige Arbeitswahrheit
 
-Stand: 2026-07-02.
+Stand: 2026-07-03.
 
 Dieses Projekt ist ausschließlich fuer einen Zweck da:
 
@@ -150,6 +150,29 @@ defensives ETH-Exposure-/Drawdown-Zwischenziel:
   Null-Flow behandelt. Das Top-Persistenz-Quintil hatte in allen Folds nach
   Kosten negative Forward-PnL. Deshalb keine Varianten-Simulation, kein
   frozen Blindtest, keine Router-Integration und kein UI-Full-Backtest.
+- BELL-v1 BTC->ETH Lead-Lag/Catch-up Scan: nach EREM-Hysteresis v1.2 wurde
+  die naechste klare Profit-Alpha-Hypothese gebaut, aber bewusst nur
+  training-only. Ergebnis:
+  `no_bell_training_edge`, `bell_sanity_failed`, `0` passing Sanity-Scans,
+  `0/6` eligible Varianten. Der beste Sanity-Ansatz war
+  `btc_impulse_with_ethbtc_lag` mit `48h`, aber nur `4` positive Folds
+  statt der erforderlichen `5`. Deshalb kein frozen Blindtest, keine
+  Router-Integration und kein UI-Full-Backtest.
+- BEV-L v1 Volatility-Divergence Scan: als zweiter neuer, anderer
+  Profit-Alpha-Versuch wurde BTC-Volatilitaetskompression plus positive
+  ETHBTC-Volatilitaetsdivergenz getestet. Ergebnis:
+  `no_bev_l_training_divergence_edge`, `0` passing Horizonte.
+  Die Horizonte `12h`, `24h`, `48h` erreichten jeweils `0`, `0`, `1`
+  passing Folds und verfehlten damit klar die Mindestanforderung. Deshalb
+  keine Strategie, kein frozen Blindtest, kein Router-Patch und kein
+  UI-Full-Backtest.
+- Kontroll-Full-Backtest nach dem BELL/BEV-Research-Patch: weil der Nutzer
+  nach Patches ein echtes Schwarz-auf-Weiss-Ergebnis wuenscht, wurde trotzdem
+  ein echter UI-Backend-Full-Run gestartet. Wichtig: dieser Run misst nicht
+  BELL/BEV, weil beide nicht routerwirksam wurden, sondern erneut die
+  unveraenderte EREM-Hysteresis-v1.2-Baseline. Ergebnis:
+  `run_20260703_180348`, `erem_minhold_exp48_flat12`, `+4.64 USDC`,
+  `+0.0127 USDC/Tag`, `50` Trades, Final Capital ca. `104.64 USDC`.
 
 Konsequenz:
 
@@ -177,6 +200,12 @@ Konsequenz:
   Re-Einschaetzung mit dem AFP-Report oder eine neue, klar getrennte
   Profit-Alpha-Spur. EREM-Hysteresis ist nur ein defensiver positiver
   Zwischenstand, nicht die Endstrategie.
+- BELL-v1 und BEV-L v1 sind nach den neuesten externen Antworten genau solche
+  getrennten Profit-Alpha-Spuren. Beide scheiterten bereits im Training-only
+  Research. Ein neuer UI-Full-Backtest waere deshalb nicht aussagekraeftig,
+  weil der echte Routerpfad unveraendert bei EREM-Hysteresis v1.2 bleibt.
+  Der Kontroll-Full `run_20260703_180348` bestaetigte genau das: unveraendert
+  positiv, aber winzig und nicht uebernahmefaehig.
 
 Aktueller Edge-Scan-Befund:
 
@@ -652,9 +681,37 @@ Aktueller EREM-Hysteresis-/Min-Hold-Stand:
 - Naechster sinnvoller Schritt:
   - Nicht EREM weiter auf denselben Blindtest tunen.
   - EREM-Hysteresis als defensive Baseline im Router belassen.
-  - Fuer Richtung `3 USDC/Tag` braucht es eine neue Profit-Alpha-Spur, die
-    oberhalb der Kosten robust ist und zuerst training-only/walkforward
-    besteht.
+  - BELL-v1 und BEV-L v1 sind als neue Profit-Alpha-Spuren gescheitert und
+    duerfen nicht per Gate-Lockerung gerettet werden.
+  - Fuer Richtung `3 USDC/Tag` braucht es entweder eine wirklich neue
+    Profit-Alpha-Spur oberhalb der Kosten oder die ehrliche Feststellung, dass
+    mit ETHUSDC Spot Long-only / 100 USDC / ohne Hebel nur defensive
+    Exposure-Verbesserung realistisch sichtbar ist.
+
+Aktuelle neue Profit-Alpha-Research-Fails nach EREM-Hysteresis:
+
+- BELL-v1 BTC->ETH Lead-Lag/Catch-up:
+  - Datei: `src/research/bell_v1_leadlag_scan.py`
+  - Script: `scripts/run_bell_v1_leadlag_scan.py`
+  - Test: `tests/test_bell_v1_leadlag_scan.py`
+  - Report:
+    `reports/research/bell_v1_leadlag_scan/bell_v1_leadlag_scan_report.json`
+  - Status: `no_bell_training_edge`
+  - Sanity: `bell_sanity_failed`
+  - Passing Sanity-Scans: `0`
+  - Varianten: `6`
+  - Eligible Varianten: `0`
+  - Entscheidung: kein frozen Blindtest, kein Router, kein UI-Full.
+- BEV-L v1 Volatility-Divergence:
+  - Datei: `src/research/bev_l_v1_divergence_scan.py`
+  - Script: `scripts/run_bev_l_v1_divergence_scan.py`
+  - Test: `tests/test_bev_l_v1_divergence_scan.py`
+  - Report:
+    `reports/research/bev_l_v1_divergence_scan/bev_l_v1_divergence_scan_report.json`
+  - Status: `no_bev_l_training_divergence_edge`
+  - Passing Horizonte: `0`
+  - Entscheidung: keine Strategie, kein frozen Blindtest, kein Router,
+    kein UI-Full.
 
 ## Datenwahrheit
 
